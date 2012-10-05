@@ -96,7 +96,7 @@ Q11
 \end_layout
 
 \begin_layout Standard
-\begin_inset Formula $10\,\textrm{Gbps}=10*2^{30}\textnormal{\,\ bps,}\therefore\,\textnormal{\text{‘}width\text{’}of}\,1\,\textnormal{bit}=\nicefrac{1}{10*2^{30}}\textnormal{\,\ seconds.}$
+\begin_inset Formula $10\,\textrm{Gbps}=10*10^{9}\textnormal{\,\ bps,}\therefore\,\textnormal{\text{‘}width\text{’}of}\,1\,\textnormal{bit}=\nicefrac{1}{10^{10}}\textnormal{\, seconds}=10\,\textnormal{nanoseconds}$
 \end_inset
 
 
@@ -104,10 +104,10 @@ Q11
 
 \begin_layout Standard
 \noindent
-\begin_inset Formula $\textnormal{Length of bit}=\textnormal{time slice}*\textnormal{distance travelled}=\nicefrac{1}{10*2^{30}}*2.3*10^{8}\,\textnormal{metres}$
+\begin_inset Formula $\textnormal{Length of bit}=\textnormal{time slice}*\textnormal{distance travelled}=2.3*10^{-2}\,\textnormal{metres}$
 \end_inset
 
-
+ 
 \end_layout
 
 \begin_layout Subsection*
@@ -115,7 +115,7 @@ Q12
 \end_layout
 
 \begin_layout Standard
-\begin_inset Formula $y\,\textnormal{Mbps}=2^{10}*y\,\textnormal{Kbps}=\nicefrac{2^{10}}{2^{3}}*y\,\textnormal{KBps}=128\, y\,\textnormal{KBps.}$
+\begin_inset Formula $y\,\textnormal{Mbps}=10^{3}*y\,\textnormal{Kbps}=\nicefrac{10^{3}}{8}*y\,\textnormal{KBps}=125\, y\,\textnormal{KBps.}$
 \end_inset
 
 
@@ -123,7 +123,7 @@ Q12
 
 \begin_layout Standard
 \noindent
-\begin_inset Formula $\therefore\,\textnormal{Time to transmit}=\frac{x}{128\, y}\,\textnormal{seconds.}$
+\begin_inset Formula $\therefore\,\textnormal{Time to transmit}=\frac{x}{125\, y}\,\textnormal{seconds.}$
 \end_inset
 
 
