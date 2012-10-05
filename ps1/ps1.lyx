@@ -204,6 +204,78 @@ Q12
 Q19
 \end_layout
 
+\begin_layout Subsubsection*
+(a)
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+\textnormal{delay}*\textnormal{bandwidth product} & = & 10*10^{-6}*100*10^{6}\\
+ & = & 1000\,\textnormal{bits}
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsubsection*
+(b)
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+\textnormal{Transmission for}\,1\,\textnormal{packet} & = & \frac{12000}{100*10^{6}}\textnormal{s}\\
+ & = & 120\mu s\\
+\textnormal{Total Delay} & = & 4\,\textnormal{Switches}+4\,\textnormal{Links}\\
+ & = & 4*120\mu s+4*10\mu s\\
+ & = & 520\mu s\\
+\textnormal{delay}*\textnormal{bandwidth product} & = & 520*10^{-6}*100*10^{6}\\
+ & = & 520000\,\textnormal{bits}
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsubsection*
+(c)
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+\textnormal{delay}*\textnormal{bandwidth product} & = & 50*10^{-3}*1.5*10^{6}\\
+ & = & 75000\,\textnormal{bits}
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsubsection*
+(d)
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+\textnormal{One-Way Delay} & = & \frac{\left(\textnormal{T1}\rightarrow\textnormal{Satellite}\rightarrow\textnormal{T1}\right)}{c}\\
+ & = & \frac{2*35900*1000}{3*10^{8}}\textnormal{s}\\
+ & = & 239.3\textnormal{ms}\\
+\textnormal{delay}*\textnormal{bandwidth product} & = & 239.3*10^{-3}*1.5*10^{6}\\
+ & = & 359000\,\textnormal{bits}
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
 \begin_layout Subsection*
 Q20
 \end_layout
