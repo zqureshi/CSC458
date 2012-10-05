@@ -91,12 +91,83 @@ Chapter 1
 Q3
 \end_layout
 
+\begin_layout Subsubsection*
+(a)
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+1.5\textnormal{Mbps} & = & 1.5*10^{6}\textnormal{bits/s}\\
+\textnormal{Total Time} & = & \textnormal{Handshake}+\frac{\textnormal{Transfer Size}}{\textnormal{Bandwidth}}+\textnormal{Propagation (RTT/2)}\\
+ & = & 2*50\textnormal{ms}+\frac{1000*2^{10}*8\textnormal{bits}}{1.5*10^{6}\textnormal{bits/s}}+\frac{50\textnormal{ms}}{2}\\
+ & = & .1\textnormal{s}+5.46\textnormal{s}+.025s\\
+ & = & 5.58\textnormal{s}
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsubsection*
+(b)
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+\textnormal{Packets Required} & = & 1000\\
+\textnormal{Total Time} & = & \textnormal{Total Time}_{\textnormal{Without Delay}}+999*\textnormal{RTT}\\
+ & = & 5.58\textnormal{s}+49.95\textnormal{s}\\
+ & = & 55.53\textnormal{s}
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsubsection*
+(c)
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+\textnormal{Packet Batches} & = & \frac{1000}{20}=50\\
+\textnormal{Total Time} & = & \textnormal{Handshake}+\textnormal{Propagation}+49\textnormal{RTT}\\
+ & = & \left(2+.5+49\right)*50\textnormal{ms}\\
+ & = & 2.575\textnormal{s}
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsubsection*
+(d)
+\begin_inset Formula 
+\begin{eqnarray*}
+1000\,\textnormal{Packets} & = & \log_{2}\left(2^{n+1}-1\right)\textnormal{Batches}\\
+n & = & 9\,\textnormal{Batches}\\
+\textnormal{Total Time} & = & \textnormal{Batches}+\textnormal{Handshake}+\textnormal{Propogation}\\
+ & = & \left(9+2+.5\right)\textnormal{RTT}\\
+ & = & .575\textnormal{s}
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
 \begin_layout Subsection*
 Q11
 \end_layout
 
 \begin_layout Standard
-\begin_inset Formula $10\,\textrm{Gbps}=10*10^{9}\textnormal{\,\ bps,}\therefore\,\textnormal{\text{‘}width\text{’}of}\,1\,\textnormal{bit}=\nicefrac{1}{10^{10}}\textnormal{\, seconds}=10\,\textnormal{nanoseconds}$
+\begin_inset Formula $10\,\textrm{Gbps}=10*10^{9}\textnormal{\,\ bps,}\therefore\,\textnormal{\text{‘}width\text{’}of}\,1\,\textnormal{bit}=\nicefrac{1}{10^{10}}\textnormal{\,\ seconds}=10\,\textnormal{nanoseconds}$
 \end_inset
 
 
