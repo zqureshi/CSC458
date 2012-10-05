@@ -280,6 +280,44 @@ Q19
 Q20
 \end_layout
 
+\begin_layout Subsubsection*
+(a)
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+\textnormal{Transmit Time on single link} & = & \frac{10000}{100*10^{6}}\\
+ & = & 100\mu s\\
+\textnormal{Total Time} & = & 2*\textnormal{Transmit Time}+2*\textnormal{Propagation Delay}+\textnormal{Switch Delay}\\
+ & = & 2*100\mu s+2*20\mu s+35\mu s\\
+ & = & 275\mu s
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsubsection*
+(b)
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+\textnormal{Transmit Time on single link} & = & \frac{5000}{100*10^{6}}\\
+ & = & 50\mu s\\
+\textnormal{Total Time} & = & 4*\textnormal{Transmit Time}+2*\textnormal{Propagation Delay}+\textnormal{Switch Delay}\\
+ & = & 4*50\mu s+4*20\mu s+2*35\mu s\\
+ & = & 350\mu s
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
 \begin_layout Section*
 Chapter 2
 \end_layout
