@@ -308,11 +308,15 @@ Q20
 \begin{eqnarray*}
 \textnormal{Transmit Time on single link} & = & \frac{5000}{100*10^{6}}\\
  & = & 50\mu s\\
-\textnormal{Total Time} & = & 4*\textnormal{Transmit Time}+2*\textnormal{Propagation Delay}+\textnormal{Switch Delay}\\
- & = & 4*50\mu s+4*20\mu s+2*35\mu s\\
- & = & 350\mu s
+\textnormal{Total Time} & = & 3*\textnormal{Transmit Time}+2*\textnormal{Propagation Delay}+\textnormal{Switch Delay}\\
+ & = & 3*50\mu s+2*20\mu s+35\mu s\\
+ & = & 225\mu s
 \end{eqnarray*}
 
+\end_inset
+
+
+\begin_inset Newpage pagebreak
 \end_inset
 
 
@@ -326,12 +330,74 @@ Chapter 2
 Q2
 \end_layout
 
+\begin_layout Standard
+4B/5B Encoding: 
+\begin_inset Box ovalbox
+position "t"
+hor_pos "c"
+has_inner_box 1
+inner_pos "t"
+use_parbox 0
+use_makebox 0
+width "100col%"
+special "none"
+height "1in"
+height_special "totalheight"
+status open
+
+\begin_layout Plain Layout
+\align center
+11100 01011 11110 10101
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+\align center
+\begin_inset Graphics
+	filename IMG_20121005_154337.jpg
+
+\end_inset
+
+
+\end_layout
+
 \begin_layout Subsection*
 Q13
 \end_layout
 
+\begin_layout Standard
+2D parity relies on having an odd (or even number) of 1s in a row and column
+ so in the case of a 2-bit error, say 2 adjacent bits in the same row flipped,
+ then the row parity stays the same but the column parity signifies that
+ there's an error.
+ Even though you can tell that there's a 2-bit error in this case, you can't
+ tell exactly which row the error occurred in and thus the exact bits where
+ it occurred.
+\end_layout
+
+\begin_layout Standard
+In case of a 1-bit error, both the row and column parity will signify it
+ and you can tell exactly which bit went wrong and correct it.
+\end_layout
+
 \begin_layout Subsection*
 Q45
+\end_layout
+
+\begin_layout Standard
+Manchester encoding has a transition from low-to-high for a 0 and from high-to-l
+ow for a 1 for every bit, thus effectively doubling the clock rate, thus
+ both ends can detect phase differences in signal even if there's consecutive
+ bit patterns and wait for the CRC to fail to thell that there's been an
+ error.
+\begin_inset Newpage pagebreak
+\end_inset
+
+
 \end_layout
 
 \begin_layout Section*
