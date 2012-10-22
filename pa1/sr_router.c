@@ -11,7 +11,9 @@
  *
  **********************************************************************/
 
+#include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <assert.h>
 
 
@@ -19,6 +21,17 @@
 #include "sr_rt.h"
 #include "sr_router.h"
 #include "sr_protocol.h"
+
+/* Macros to convert byte order */
+#define HOST_SHORT(PTR) (PTR = ntohs(PTR))
+#define HOST_LONG(PTR)  (PTR = ntohl(PTR))
+
+#define NET_SHORT(PTR)  (PTR = htons(PTR))
+#define NET_LONG(PTR)   (PTR = htonl(PTR))
+
+/* Forward declarations */
+void sr_handleproto_ARP(struct sr_instance *, struct sr_if *,
+        struct sr_ethernet_hdr *, struct sr_arphdr *);
 
 /*--------------------------------------------------------------------- 
  * Method: sr_init(void)
@@ -65,12 +78,102 @@ void sr_handlepacket(struct sr_instance* sr,
     assert(packet);
     assert(interface);
 
-    printf("*** -> Received packet of length %d \n",len);
+    printf("*** -> Received packet of length %d \n", len);
 
-}/* end sr_ForwardPacket */
+    /* Ethernet Interface */
+    struct sr_if *eth_if = (struct sr_if *) sr_get_interface(sr, interface);
 
+    if(eth_if) {
+        printf("Interface: %s \n", eth_if->name);
+    } else {
+        printf("!!! Invalid Interface: %s \n", interface);
+    }
 
-/*--------------------------------------------------------------------- 
- * Method:
- *
- *---------------------------------------------------------------------*/
+    /* Ethernet Header */
+    struct sr_ethernet_hdr *eth_hdr = (struct sr_ethernet_hdr *) packet;
+
+    switch(ntohs(eth_hdr->ether_type)) {
+        case ETHERTYPE_ARP:
+            printf("Protocol: ARP. \n");
+
+            /* Cast to ARP header by indexing into packet */
+            struct sr_arphdr *arp_hdr = (struct sr_arphdr *)(packet + sizeof(struct sr_ethernet_hdr));
+
+            sr_handleproto_ARP(sr, eth_if, eth_hdr, arp_hdr);
+            break;
+
+        default:
+            printf("!!! Unrecognized Protocol Type: %d \n", eth_hdr->ether_type);
+    }
+}/* end sr_handlpacket */
+
+/*
+ * Handle ARP protocol packets
+ */
+void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
+        struct sr_if *eth_if, /* Network byte order */
+        struct sr_ethernet_hdr *eth_hdr, /* Byte order converted */
+        struct sr_arphdr *arp_hdr /* Network order converted */)
+{
+    assert(sr);
+    assert(eth_if);
+    assert(eth_hdr);
+    assert(arp_hdr);
+
+    /* Only handle ARP packets for Ethernet */
+    switch(ntohs(arp_hdr->ar_hrd)) {
+        case ARPHDR_ETHER:
+            break;
+
+        default:
+            printf("Only handle ARP Packets for Ethernet. \n");
+            return;
+    }
+
+    switch(ntohs(arp_hdr->ar_op)) {
+        case ARP_REQUEST: /* Handle ARP Request */
+
+            /* If Request is for Router's IP then send a reply */
+            if(eth_if->ip == arp_hdr->ar_tip) {
+                unsigned int len = sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr);
+                uint8_t *buf = malloc(len);
+
+                /* Populate reply Ethernet header */
+                struct sr_ethernet_hdr *rep_eth_hdr = (struct sr_ethernet_hdr *) buf;
+                memcpy(rep_eth_hdr->ether_shost, eth_if->addr, sizeof(eth_if->addr));
+                memcpy(rep_eth_hdr->ether_dhost, eth_hdr->ether_shost, sizeof(eth_hdr->ether_shost));
+                rep_eth_hdr->ether_type = htons(ETHERTYPE_ARP);
+
+                /*
+                 * Populate ARP reply, copy over source arp header since most
+                 * of the fields are going to be the same
+                 */
+                struct sr_arphdr *rep_arp_hdr = (struct sr_arphdr *) (buf + sizeof(struct sr_ethernet_hdr));
+                memcpy(rep_arp_hdr, arp_hdr, sizeof(struct sr_arphdr));
+
+                /* Mark packet as reply*/
+                rep_arp_hdr->ar_op = htons(ARP_REPLY);
+                /* Sender in Request is Target in reply */
+                memcpy(rep_arp_hdr->ar_tha, arp_hdr->ar_sha, sizeof(arp_hdr->ar_sha));
+                rep_arp_hdr->ar_tip = arp_hdr->ar_sip;
+                /* Sender in reply is our own address */
+                memcpy(rep_arp_hdr->ar_sha, eth_if->addr, sizeof(eth_if->addr));
+                rep_arp_hdr->ar_sip = eth_if->ip;
+
+                /* Send packet and free buffer */
+                int result = sr_send_packet(sr, buf, len, eth_if->name);
+                free(buf);
+                if(result == 0) {
+                    printf("*** -> Sent Packet of length: %d \n", len);
+                }
+            }
+
+            break;
+
+        case ARP_REPLY: /* Handle ARP Reply */
+            break;
+
+        default:
+            printf("Only handle ARP Request and Reply. \n");
+    }
+}
