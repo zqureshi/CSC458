@@ -32,9 +32,10 @@ ARCH = -D_DARWIN_
 SOCK = -lresolv
 endif
 
-CFLAGS = -g -Wall -std=gnu99 -D_DEBUG_ $(ARCH)
+CFLAGS = -g -Wall -std=gnu99 -D_DEBUG_ $(INCLUDES) $(ARCH)
 
-LIBS= $(SOCK) -lm
+INCLUDES= -I/usr/include/glib-2.0 -I/usr/lib/i386-linux-gnu/glib-2.0/include
+LIBS= $(SOCK) -lm -lglib-2.0
 PFLAGS= -follow-child-processes=yes -cache-dir=/tmp/${USER}
 PURIFY= purify ${PFLAGS}
 
