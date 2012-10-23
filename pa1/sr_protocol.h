@@ -136,6 +136,8 @@ struct sr_ethernet_hdr
 #define ARP_REQUEST 1
 #define ARP_REPLY   2
 
+#define IPv4 4
+
 struct sr_arphdr 
 {
     unsigned short  ar_hrd;             /* format of hardware address   */

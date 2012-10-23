@@ -30,9 +30,19 @@
 #define NET_SHORT(PTR)  (PTR = htons(PTR))
 #define NET_LONG(PTR)   (PTR = htonl(PTR))
 
+/* Offset of IPv4 Checksum */
+#define IPv4_CHECKSUM_OFFSET 10
+#define IPv4_CHECKSUM_LENGTH 2
+#define IPv4_MAX_HEADER_LENGTH 60
+#define IPv4_WORD_SIZE 4
+
 /* Forward declarations */
 void sr_handleproto_ARP(struct sr_instance *, struct sr_if *,
         struct sr_ethernet_hdr *, struct sr_arphdr *);
+void sr_handleproto_IP(struct sr_instance *, struct sr_if *,
+        struct sr_ethernet_hdr *, struct ip *);
+uint16_t header_checksum(uint8_t *, uint16_t, uint16_t, uint16_t);
+uint16_t IP_header_checksum(struct ip *);
 
 /*--------------------------------------------------------------------- 
  * Method: sr_init(void)
@@ -103,6 +113,14 @@ void sr_handlepacket(struct sr_instance* sr,
             sr_handleproto_ARP(sr, eth_if, eth_hdr, arp_hdr);
             break;
 
+        case ETHERTYPE_IP:
+            printf("Protocol: IP. \n");
+
+            /* Cast to IP Header by indexing into packet */
+            struct ip *ip_hdr = (struct ip *)(packet + sizeof(struct sr_ethernet_hdr));
+
+            sr_handleproto_IP(sr, eth_if, eth_hdr, ip_hdr);
+            break;
         default:
             printf("!!! Unrecognized Protocol Type: %d \n", eth_hdr->ether_type);
     }
@@ -113,8 +131,8 @@ void sr_handlepacket(struct sr_instance* sr,
  */
 void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
         struct sr_if *eth_if, /* Network byte order */
-        struct sr_ethernet_hdr *eth_hdr, /* Byte order converted */
-        struct sr_arphdr *arp_hdr /* Network order converted */)
+        struct sr_ethernet_hdr *eth_hdr, /* Network byte order */
+        struct sr_arphdr *arp_hdr /* Network byte order */)
 {
     assert(sr);
     assert(eth_if);
@@ -177,4 +195,62 @@ void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
         default:
             printf("Only handle ARP Request and Reply. \n");
     }
+}
+
+/* Handle IP Packets */
+void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
+        struct sr_if *eth_if, /* Network byte order */
+        struct sr_ethernet_hdr *eth_hdr, /* Network byte order */
+        struct ip *ip_hdr /* Network byte order */)
+{
+    assert(sr);
+    assert(eth_if);
+    assert(eth_hdr);
+    assert(ip_hdr);
+
+    /* Check IP Protocol Version */
+    switch(ip_hdr->ip_v) {
+        case IPv4:
+            break;
+
+        default:
+            printf("Only handle IP Version 4. \n");
+            return;
+    }
+
+    /* Validate Checksum */
+    if(ntohs(ip_hdr->ip_sum) != IP_header_checksum(ip_hdr)) {
+        printf("!!! Invalid checksum. \n");
+        return;
+    }
+}
+
+uint16_t IP_header_checksum(struct ip *ip_hdr) {
+    return header_checksum((uint8_t *)ip_hdr, ip_hdr->ip_hl * IPv4_WORD_SIZE, IPv4_CHECKSUM_OFFSET, IPv4_CHECKSUM_LENGTH);
+}
+
+uint16_t header_checksum(uint8_t *buf, uint16_t len, uint16_t cksum_offset, uint16_t cksum_length)
+{
+    uint32_t sum = 0;
+    uint8_t header[IPv4_MAX_HEADER_LENGTH];
+
+    /* Copy over buffer */
+    memcpy(header, buf, len);
+
+    /* Set header checksum to zero */
+    memset(header + cksum_offset, 0x0, cksum_length);
+
+    /* Calculate 16 bit sum */
+    for(int i=0; i < len; i+=2) {
+        sum += (uint32_t)(header[i] << 8 | header[i+1]);
+    }
+
+    /* Fold 32 bit number to 16 bit */
+    while(sum >> 16)
+        sum = (sum >> 16) + (sum & 0xffff);
+
+    /* One's Complement */
+    sum = ~sum;
+
+    return sum;
 }
