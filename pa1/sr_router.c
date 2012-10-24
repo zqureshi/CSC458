@@ -17,6 +17,7 @@
 #include <assert.h>
 #include <glib.h>
 #include <unistd.h>
+#include <glib.h>
 
 #include "sr_if.h"
 #include "sr_rt.h"
@@ -40,6 +41,8 @@
 #define ICMP_CHECKSUM_OFFSET 2
 #define ICMP_CHECKSUM_LENGTH 2
 
+#define ARP_CACHE_TIMEOUT 15 * G_USEC_PER_SEC /* 15 Seconds */
+
 /* Forward declarations */
 void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
         struct sr_if *eth_if, /* Network byte order */
@@ -55,6 +58,45 @@ uint16_t IP_header_checksum(struct ip *ip_hdr);
 uint16_t ICMP_header_checksum(struct icmp_hdr *icmp_hdr, uint16_t icmp_len);
 void populate_ip_header(uint8_t *buf, uint16_t data_len, uint8_t proto, struct in_addr src, struct in_addr dst);
 
+/* ARP Cache */
+GHashTable *arp_cache;
+
+struct arp_entry
+{
+    uint32_t ip;  /* Host IP Address */
+    uint8_t  ha[ETHER_ADDR_LEN];  /* Host Hardware Address */
+    gint64 time;  /* Time when cache entry was last refreshed */
+};
+
+struct arp_entry *arp_lookup_entry(uint32_t ip)
+{
+    struct arp_entry *entry = g_hash_table_lookup(arp_cache, &ip);
+
+    if(entry) {
+        printf("ARP Cache: Hit \n");
+        if((g_get_monotonic_time() - entry->time) > ARP_CACHE_TIMEOUT) {
+            printf("ARP Cache: Expired Entry \n");
+            g_hash_table_remove(arp_cache, &ip);
+        } else {
+            printf("ARP Cache: Renew Entry \n");
+            entry->time = g_get_monotonic_time();
+        }
+    }
+
+    return entry;
+};
+
+void arp_free_entry(gpointer value)
+{
+    free((struct arp_entry *)value);
+}
+
+void arp_print_entry(gpointer key, gpointer value, gpointer user_data)
+{
+    struct arp_entry *entry = (struct arp_entry *) value;
+    printf("IP: %ud, Age: %lld seconds \n", entry->ip, (g_get_monotonic_time() - entry->time)/G_USEC_PER_SEC );
+}
+
 /*--------------------------------------------------------------------- 
  * Method: sr_init(void)
  * Scope:  Global
@@ -68,8 +110,8 @@ void sr_init(struct sr_instance* sr)
     /* REQUIRES */
     assert(sr);
 
-    /* Add initialization code here! */
-
+    /* Initialize ARP Cache */
+    arp_cache = g_hash_table_new_full(g_int_hash, g_int_equal, NULL, arp_free_entry);
 } /* -- sr_init -- */
 
 
@@ -162,6 +204,7 @@ void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
 
     switch(ntohs(arp_hdr->ar_op)) {
         case ARP_REQUEST: /* Handle ARP Request */
+        {
             printf("ARP Operation: Request \n");
 
             /* If Request is for Router's IP then send a reply */
@@ -197,7 +240,13 @@ void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
                 }
             }
 
+            /*
+             * If ARP Target IP wasn't one of the router's IP's,
+             * then just drop packet.
+             */
+
             break;
+        }
 
         case ARP_REPLY: /* Handle ARP Reply */
             break;
@@ -362,6 +411,11 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
     if(next_hop == NULL) {
         printf("!!! No Routing Entry, Dropping Packet. \n");
         return;
+    }
+
+    struct arp_entry *entry = arp_lookup_entry(next_hop->gw.s_addr);
+    if(entry == NULL) {
+        /* Queue packet and send ARP Request */
     }
 }
 
