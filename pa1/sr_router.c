@@ -156,14 +156,16 @@ void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
 
     switch(ntohs(arp_hdr->ar_op)) {
         case ARP_REQUEST: /* Handle ARP Request */
+            printf("ARP Operation: Request \n");
 
             /* If Request is for Router's IP then send a reply */
-            if(eth_if->ip == arp_hdr->ar_tip) {
+            struct sr_if *t_eth_if = sr_get_interface_for_ip(sr, arp_hdr->ar_tip);
+            if(t_eth_if != 0) {
                 unsigned int len = sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr);
                 uint8_t *buf = malloc(len);
 
                 /* Populate reply Ethernet header */
-                populate_ethernet_header(buf, eth_if->addr, eth_hdr->ether_shost, ETHERTYPE_ARP);
+                populate_ethernet_header(buf, t_eth_if->addr, eth_hdr->ether_shost, ETHERTYPE_ARP);
 
                 /*
                  * Populate ARP reply, copy over source arp header since most
@@ -178,11 +180,11 @@ void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
                 memcpy(rep_arp_hdr->ar_tha, arp_hdr->ar_sha, sizeof(arp_hdr->ar_sha));
                 rep_arp_hdr->ar_tip = arp_hdr->ar_sip;
                 /* Sender in reply is our own address */
-                memcpy(rep_arp_hdr->ar_sha, eth_if->addr, sizeof(eth_if->addr));
-                rep_arp_hdr->ar_sip = eth_if->ip;
+                memcpy(rep_arp_hdr->ar_sha, t_eth_if->addr, sizeof(t_eth_if->addr));
+                rep_arp_hdr->ar_sip = t_eth_if->ip;
 
                 /* Send packet and free buffer */
-                int result = sr_send_packet(sr, buf, len, eth_if->name);
+                int result = sr_send_packet(sr, buf, len, t_eth_if->name);
                 free(buf);
                 if(result == 0) {
                     printf("*** -> Sent Packet of length: %d \n", len);
@@ -227,7 +229,7 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
     }
 
     /* Handle packet if Router is destination */
-    if(ip_hdr->ip_dst.s_addr == eth_if->ip) {
+    if(sr_get_interface_for_ip(sr, ip_hdr->ip_dst.s_addr) != 0) {
         switch(ip_hdr->ip_p) {
             case IPPROTO_ICMP:
                 printf("IP Protocol: ICMP \n");
