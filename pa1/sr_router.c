@@ -43,6 +43,8 @@
 
 #define ARP_CACHE_TIMEOUT 15 * G_USEC_PER_SEC /* 15 Seconds */
 
+#define ETHER_ADDR_BROADCAST "\xff\xff\xff\xff\xff\xff"
+
 /* Forward declarations */
 void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
         struct sr_if *eth_if, /* Network byte order */
@@ -68,9 +70,13 @@ struct arp_entry
     gint64 time;  /* Time when cache entry was last refreshed */
 };
 
-struct arp_entry *arp_lookup_entry(uint32_t ip)
+/*
+ * Return TRUE if entry found and copy over to out, else FALSE.
+ */
+int arp_lookup_entry(uint32_t ip, struct arp_entry *out)
 {
     struct arp_entry *entry = g_hash_table_lookup(arp_cache, &ip);
+    int found = FALSE;
 
     if(entry) {
         printf("ARP Cache: Hit \n");
@@ -80,10 +86,12 @@ struct arp_entry *arp_lookup_entry(uint32_t ip)
         } else {
             printf("ARP Cache: Renew Entry \n");
             entry->time = g_get_monotonic_time();
+            memcpy(out, entry, sizeof(struct arp_entry));
+            found = TRUE;
         }
     }
 
-    return entry;
+    return found;
 };
 
 void arp_free_entry(gpointer value)
@@ -413,9 +421,39 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         return;
     }
 
-    struct arp_entry *entry = arp_lookup_entry(next_hop->gw.s_addr);
-    if(entry == NULL) {
+    struct arp_entry entry;
+    if(!arp_lookup_entry(next_hop->gw.s_addr, &entry)) {
         /* Queue packet and send ARP Request */
+        printf("No ARP Entry for Gateway, queuing packet. \n");
+
+        /* Send ARP Request for Gateway */
+        int len = sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr);
+        uint8_t *buf = malloc(len);
+        struct sr_if *out_port = sr_get_interface(sr, next_hop->interface);
+
+        /* Populate ARP Header */
+        struct sr_arphdr *arp_hdr = (struct sr_arphdr *)(buf + sizeof(struct sr_ethernet_hdr));
+        arp_hdr->ar_hrd = htons(ARPHDR_ETHER);
+        arp_hdr->ar_pro = htons(ETHERTYPE_IP);
+        arp_hdr->ar_hln = 6;
+        arp_hdr->ar_pln = 4;
+        arp_hdr->ar_op = htons(ARP_REQUEST);
+        memcpy(arp_hdr->ar_sha, out_port->addr, ETHER_ADDR_LEN);
+        arp_hdr->ar_sip = out_port->ip;
+        memcpy(arp_hdr->ar_tha, ETHER_ADDR_BROADCAST, ETHER_ADDR_LEN);
+        arp_hdr->ar_tip = next_hop->gw.s_addr;
+
+        /* Populate Ethernet Header */
+        populate_ethernet_header(buf, out_port->addr, (uint8_t *)ETHER_ADDR_BROADCAST, ETHERTYPE_ARP);
+
+        /* Send packet and free buffer */
+        int result = sr_send_packet(sr, buf, len, out_port->name);
+        free(buf);
+        if(result == 0) {
+            printf("*** -> Sent Packet of length: %d \n", len);
+        }
+
+        return;
     }
 }
 
