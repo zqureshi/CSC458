@@ -103,6 +103,19 @@ struct ip
     struct in_addr ip_src, ip_dst;	/* source and dest address */
   } __attribute__ ((packed)) ;
 
+struct icmp_hdr
+{
+    uint8_t ic_type;       /* Message Type */
+    uint8_t ic_code;       /* Code */
+    uint16_t ic_sum;       /* Checksum */
+} __attribute__ ((packed)) ;
+
+struct icmp_echo_hdr
+{
+    uint16_t ec_id;        /* Identifier */
+    uint16_t ec_seq;       /* Sequence Number */
+} __attribute__ ((packed)) ;
+
 /* 
  *  Ethernet packet header prototype.  Too many O/S's define this differently.
  *  Easy enough to solve that and define it here.
@@ -137,6 +150,9 @@ struct sr_ethernet_hdr
 #define ARP_REPLY   2
 
 #define IPv4 4
+
+#define ICMP_ECHO_REQUEST 8
+#define ICMP_ECHO_REPLY   1
 
 struct sr_arphdr 
 {

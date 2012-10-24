@@ -33,8 +33,10 @@
 /* Offset of IPv4 Checksum */
 #define IPv4_CHECKSUM_OFFSET 10
 #define IPv4_CHECKSUM_LENGTH 2
-#define IPv4_MAX_HEADER_LENGTH 60
 #define IPv4_WORD_SIZE 4
+
+#define ICMP_CHECKSUM_OFFSET 2
+#define ICMP_CHECKSUM_LENGTH 2
 
 /* Forward declarations */
 void sr_handleproto_ARP(struct sr_instance *, struct sr_if *,
@@ -43,6 +45,7 @@ void sr_handleproto_IP(struct sr_instance *, struct sr_if *,
         struct sr_ethernet_hdr *, struct ip *);
 uint16_t header_checksum(uint8_t *, uint16_t, uint16_t, uint16_t);
 uint16_t IP_header_checksum(struct ip *);
+uint16_t ICMP_header_checksum(struct ip *, struct icmp_hdr *);
 
 /*--------------------------------------------------------------------- 
  * Method: sr_init(void)
@@ -223,16 +226,54 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         printf("!!! Invalid checksum. \n");
         return;
     }
+
+    /* Handle packet if Router is destination */
+    if(ip_hdr->ip_dst.s_addr == eth_if->ip) {
+        switch(ip_hdr->ip_p) {
+            case IPPROTO_ICMP:
+                printf("IP Protocol: ICMP \n");
+
+                struct icmp_hdr *icmp_hdr = (struct icmp_hdr *)(((uint8_t *)ip_hdr) + ip_hdr->ip_hl * IPv4_WORD_SIZE);
+
+                /* Validate Checksum */
+                if(ntohs(ntohs(icmp_hdr->ic_sum) != ICMP_header_checksum(ip_hdr, icmp_hdr))) {
+                    printf("!!! Invalid checksum. \n");
+                    return;
+                }
+
+                switch(icmp_hdr->ic_type) {
+                    case ICMP_ECHO_REQUEST:
+                        printf("ICMP Message Type: Echo Request \n");
+                        break;
+
+                    default:
+                        printf("Unhandled ICMP Message Type. \n");
+                }
+                break;
+
+            default:
+                printf("Only handle ICMP if Router is Destination. \n");
+        }
+
+        return;
+    }
+
+    /* Else, forward packet after lookup in Routing Table */
 }
 
 uint16_t IP_header_checksum(struct ip *ip_hdr) {
     return header_checksum((uint8_t *)ip_hdr, ip_hdr->ip_hl * IPv4_WORD_SIZE, IPv4_CHECKSUM_OFFSET, IPv4_CHECKSUM_LENGTH);
 }
 
+uint16_t ICMP_header_checksum(struct ip *ip_hdr, struct icmp_hdr *icmp_hdr) {
+    uint16_t icmp_len = ntohs(ip_hdr->ip_len) - ip_hdr->ip_hl * IPv4_WORD_SIZE;
+    return header_checksum((uint8_t *)icmp_hdr, icmp_len, ICMP_CHECKSUM_OFFSET, ICMP_CHECKSUM_LENGTH);
+}
+
 uint16_t header_checksum(uint8_t *buf, uint16_t len, uint16_t cksum_offset, uint16_t cksum_length)
 {
     uint32_t sum = 0;
-    uint8_t header[IPv4_MAX_HEADER_LENGTH];
+    uint8_t *header = malloc(sizeof(uint8_t) * len);
 
     /* Copy over buffer */
     memcpy(header, buf, len);
@@ -251,6 +292,9 @@ uint16_t header_checksum(uint8_t *buf, uint16_t len, uint16_t cksum_offset, uint
 
     /* One's Complement */
     sum = ~sum;
+
+    /* Free up allocated buffer */
+    free(header);
 
     return sum;
 }
