@@ -40,14 +40,19 @@
 #define ICMP_CHECKSUM_LENGTH 2
 
 /* Forward declarations */
-void sr_handleproto_ARP(struct sr_instance *, struct sr_if *,
-        struct sr_ethernet_hdr *, struct sr_arphdr *);
-void sr_handleproto_IP(struct sr_instance *, struct sr_if *,
-        struct sr_ethernet_hdr *, struct ip *);
-void populate_ethernet_header(uint8_t *, uint8_t *, uint8_t *, uint16_t);
-uint16_t header_checksum(uint8_t *, uint16_t, uint16_t, uint16_t);
-uint16_t IP_header_checksum(struct ip *);
-uint16_t ICMP_header_checksum(struct ip *, struct icmp_hdr *);
+void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
+        struct sr_if *eth_if, /* Network byte order */
+        struct sr_ethernet_hdr *eth_hdr, /* Network byte order */
+        struct sr_arphdr *arp_hdr /* Network byte order */);
+void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
+        struct sr_if *eth_if, /* Network byte order */
+        struct sr_ethernet_hdr *eth_hdr, /* Network byte order */
+        struct ip *ip_hdr /* Network byte order */);
+void populate_ethernet_header(uint8_t *buf, uint8_t *eth_shost, uint8_t *eth_dhost, uint16_t ether_type);
+uint16_t header_checksum(uint8_t *buf, uint16_t len, uint16_t cksum_offset, uint16_t cksum_length);
+uint16_t IP_header_checksum(struct ip *ip_hdr);
+uint16_t ICMP_header_checksum(struct ip *ip_hdr, struct icmp_hdr *icmp_hdr);
+void populate_ip_header(uint8_t *buf, uint16_t data_len, uint8_t proto, struct in_addr src, struct in_addr dst);
 
 /*--------------------------------------------------------------------- 
  * Method: sr_init(void)
@@ -264,19 +269,12 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
                         rep_icmp_hdr->ic_sum = htons(ICMP_header_checksum(ip_hdr, icmp_hdr));
 
                         /* Populate IP Header */
-                        struct ip *rep_ip_hdr = (struct ip *)(buf + sizeof(struct sr_ethernet_hdr));
-                        rep_ip_hdr->ip_v = IPv4;
-                        rep_ip_hdr->ip_hl = sizeof(struct ip)/IPv4_WORD_SIZE;
-                        rep_ip_hdr->ip_len = htons(sizeof(struct ip) + icmp_len);
-                        rep_ip_hdr->ip_id = 0x0000;
-                        rep_ip_hdr->ip_off = 0x0000;
-                        rep_ip_hdr->ip_ttl = IPV4_TTL;
-                        rep_ip_hdr->ip_p = IPPROTO_ICMP;
-                        rep_ip_hdr->ip_src = ip_hdr->ip_dst;
-                        rep_ip_hdr->ip_dst = ip_hdr->ip_src;
-
-                        /* Calculate Checksum */
-                        rep_ip_hdr->ip_sum = htons(IP_header_checksum(rep_ip_hdr));
+                        populate_ip_header(
+                                buf + sizeof(struct sr_ethernet_hdr),
+                                icmp_len,
+                                IPPROTO_ICMP,
+                                ip_hdr->ip_dst,
+                                ip_hdr->ip_src);
 
                         /* Populate Ethernet Header */
                         populate_ethernet_header(buf, eth_hdr->ether_dhost, eth_hdr->ether_shost, ETHERTYPE_IP);
@@ -295,8 +293,14 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
                 }
                 break;
 
+            case IPPROTO_TCP:
+                break;
+
+            case IPPROTO_UDP:
+                break;
+
             default:
-                printf("Only handle ICMP if Router is Destination. \n");
+                printf("!!! Unhandled IP Protocol. \n");
         }
 
         return;
@@ -309,17 +313,50 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
  * Populate allocated buffer *buf to be sent to destination eth_dhost
  * from eth_shost with protocol type ether_type
  */
-void populate_ethernet_header(uint8_t *buf, uint8_t *eth_shost, uint8_t *eth_dhost, uint16_t ether_type) {
+void populate_ethernet_header(uint8_t *buf, uint8_t *eth_shost, uint8_t *eth_dhost, uint16_t ether_type)
+{
     struct sr_ethernet_hdr *rep_eth_hdr = (struct sr_ethernet_hdr *) buf;
     memcpy(rep_eth_hdr->ether_shost, eth_shost, sizeof(uint8_t) * ETHER_ADDR_LEN);
     memcpy(rep_eth_hdr->ether_dhost, eth_dhost, sizeof(uint8_t) * ETHER_ADDR_LEN);
     rep_eth_hdr->ether_type = htons(ether_type);
 }
-uint16_t IP_header_checksum(struct ip *ip_hdr) {
+
+/*
+ * Populate allocated buf with a fresh IP Header. You should call this method
+ * once the data has been put in the buffer so that the generated checksum is
+ * valid.
+ *
+ * buf:  Buffer with enough space for header
+ * data_len:  Length of data (excluding IP header which will be added automatically) (Host Order)
+ * proto:  IP Protocol
+ * src:  Source Address (Network Order)
+ * dst:  Destination Address (Network Order)
+ */
+void populate_ip_header(uint8_t *buf, uint16_t data_len, uint8_t proto, struct in_addr src, struct in_addr dst)
+{
+    struct ip *ip_hdr = (struct ip *)buf;
+
+    ip_hdr->ip_v = IPv4;
+    ip_hdr->ip_hl = sizeof(struct ip)/IPv4_WORD_SIZE;
+    ip_hdr->ip_len = htons(sizeof(struct ip) + data_len);
+    ip_hdr->ip_id = 0x0000;
+    ip_hdr->ip_off = 0x0000;
+    ip_hdr->ip_ttl = IPV4_TTL;
+    ip_hdr->ip_p = proto;
+    ip_hdr->ip_src = src;
+    ip_hdr->ip_dst = dst;
+
+    /* Calculate Checksum */
+    ip_hdr->ip_sum = htons(IP_header_checksum(ip_hdr));
+}
+
+uint16_t IP_header_checksum(struct ip *ip_hdr)
+{
     return header_checksum((uint8_t *)ip_hdr, ip_hdr->ip_hl * IPv4_WORD_SIZE, IPv4_CHECKSUM_OFFSET, IPv4_CHECKSUM_LENGTH);
 }
 
-uint16_t ICMP_header_checksum(struct ip *ip_hdr, struct icmp_hdr *icmp_hdr) {
+uint16_t ICMP_header_checksum(struct ip *ip_hdr, struct icmp_hdr *icmp_hdr)
+{
     uint16_t icmp_len = ntohs(ip_hdr->ip_len) - ip_hdr->ip_hl * IPv4_WORD_SIZE;
     return header_checksum((uint8_t *)icmp_hdr, icmp_len, ICMP_CHECKSUM_OFFSET, ICMP_CHECKSUM_LENGTH);
 }
