@@ -43,6 +43,7 @@ void sr_handleproto_ARP(struct sr_instance *, struct sr_if *,
         struct sr_ethernet_hdr *, struct sr_arphdr *);
 void sr_handleproto_IP(struct sr_instance *, struct sr_if *,
         struct sr_ethernet_hdr *, struct ip *);
+void populate_ethernet_header(uint8_t *, uint8_t *, uint8_t *, uint16_t);
 uint16_t header_checksum(uint8_t *, uint16_t, uint16_t, uint16_t);
 uint16_t IP_header_checksum(struct ip *);
 uint16_t ICMP_header_checksum(struct ip *, struct icmp_hdr *);
@@ -161,10 +162,7 @@ void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
                 uint8_t *buf = malloc(len);
 
                 /* Populate reply Ethernet header */
-                struct sr_ethernet_hdr *rep_eth_hdr = (struct sr_ethernet_hdr *) buf;
-                memcpy(rep_eth_hdr->ether_shost, eth_if->addr, sizeof(eth_if->addr));
-                memcpy(rep_eth_hdr->ether_dhost, eth_hdr->ether_shost, sizeof(eth_hdr->ether_shost));
-                rep_eth_hdr->ether_type = htons(ETHERTYPE_ARP);
+                populate_ethernet_header(buf, eth_if->addr, eth_hdr->ether_shost, ETHERTYPE_ARP);
 
                 /*
                  * Populate ARP reply, copy over source arp header since most
@@ -261,6 +259,16 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
     /* Else, forward packet after lookup in Routing Table */
 }
 
+/*
+ * Populate allocated buffer *buf to be sent to destination eth_dhost
+ * from eth_shost with protocol type ether_type
+ */
+void populate_ethernet_header(uint8_t *buf, uint8_t *eth_shost, uint8_t *eth_dhost, uint16_t ether_type) {
+    struct sr_ethernet_hdr *rep_eth_hdr = (struct sr_ethernet_hdr *) buf;
+    memcpy(rep_eth_hdr->ether_shost, eth_shost, sizeof(uint8_t) * ETHER_ADDR_LEN);
+    memcpy(rep_eth_hdr->ether_dhost, eth_dhost, sizeof(uint8_t) * ETHER_ADDR_LEN);
+    rep_eth_hdr->ether_type = htons(ether_type);
+}
 uint16_t IP_header_checksum(struct ip *ip_hdr) {
     return header_checksum((uint8_t *)ip_hdr, ip_hdr->ip_hl * IPv4_WORD_SIZE, IPv4_CHECKSUM_OFFSET, IPv4_CHECKSUM_LENGTH);
 }
