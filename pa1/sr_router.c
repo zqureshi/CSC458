@@ -36,6 +36,7 @@
 #define IPv4_CHECKSUM_OFFSET 10
 #define IPv4_CHECKSUM_LENGTH 2
 #define IPv4_WORD_SIZE 4
+#define IPv4_ADDR_LEN 4
 #define IPV4_TTL 64
 
 #define ICMP_CHECKSUM_OFFSET 2
@@ -59,6 +60,7 @@ uint16_t header_checksum(uint8_t *buf, uint16_t len, uint16_t cksum_offset, uint
 uint16_t IP_header_checksum(struct ip *ip_hdr);
 uint16_t ICMP_header_checksum(struct icmp_hdr *icmp_hdr, uint16_t icmp_len);
 void populate_ip_header(uint8_t *buf, uint16_t data_len, uint8_t proto, struct in_addr src, struct in_addr dst);
+void populate_arp_header(uint8_t *buf, uint16_t hrd, uint16_t op, uint8_t *sha, uint32_t sip, uint8_t *dha, uint32_t dip);
 
 /* ARP Cache */
 GHashTable *arp_cache;
@@ -221,24 +223,17 @@ void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
                 unsigned int len = sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr);
                 uint8_t *buf = malloc(len);
 
+                /* Populate ARP Reply */
+                populate_arp_header(buf + sizeof(struct sr_ethernet_hdr),
+                        ARPHDR_ETHER,
+                        ARP_REPLY,
+                        t_eth_if->addr,
+                        t_eth_if->ip,
+                        arp_hdr->ar_sha,
+                        arp_hdr->ar_sip);
+
                 /* Populate reply Ethernet header */
                 populate_ethernet_header(buf, t_eth_if->addr, eth_hdr->ether_shost, ETHERTYPE_ARP);
-
-                /*
-                 * Populate ARP reply, copy over source arp header since most
-                 * of the fields are going to be the same
-                 */
-                struct sr_arphdr *rep_arp_hdr = (struct sr_arphdr *) (buf + sizeof(struct sr_ethernet_hdr));
-                memcpy(rep_arp_hdr, arp_hdr, sizeof(struct sr_arphdr));
-
-                /* Mark packet as reply*/
-                rep_arp_hdr->ar_op = htons(ARP_REPLY);
-                /* Sender in Request is Target in reply */
-                memcpy(rep_arp_hdr->ar_tha, arp_hdr->ar_sha, sizeof(arp_hdr->ar_sha));
-                rep_arp_hdr->ar_tip = arp_hdr->ar_sip;
-                /* Sender in reply is our own address */
-                memcpy(rep_arp_hdr->ar_sha, t_eth_if->addr, sizeof(t_eth_if->addr));
-                rep_arp_hdr->ar_sip = t_eth_if->ip;
 
                 /* Send packet and free buffer */
                 int result = sr_send_packet(sr, buf, len, t_eth_if->name);
@@ -432,16 +427,13 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         struct sr_if *out_port = sr_get_interface(sr, next_hop->interface);
 
         /* Populate ARP Header */
-        struct sr_arphdr *arp_hdr = (struct sr_arphdr *)(buf + sizeof(struct sr_ethernet_hdr));
-        arp_hdr->ar_hrd = htons(ARPHDR_ETHER);
-        arp_hdr->ar_pro = htons(ETHERTYPE_IP);
-        arp_hdr->ar_hln = 6;
-        arp_hdr->ar_pln = 4;
-        arp_hdr->ar_op = htons(ARP_REQUEST);
-        memcpy(arp_hdr->ar_sha, out_port->addr, ETHER_ADDR_LEN);
-        arp_hdr->ar_sip = out_port->ip;
-        memcpy(arp_hdr->ar_tha, ETHER_ADDR_BROADCAST, ETHER_ADDR_LEN);
-        arp_hdr->ar_tip = next_hop->gw.s_addr;
+        populate_arp_header(buf + sizeof(struct sr_ethernet_hdr),
+                ARPHDR_ETHER,
+                ARP_REQUEST,
+                out_port->addr,
+                out_port->ip,
+                (uint8_t *)ETHER_ADDR_BROADCAST,
+                next_hop->gw.s_addr);
 
         /* Populate Ethernet Header */
         populate_ethernet_header(buf, out_port->addr, (uint8_t *)ETHER_ADDR_BROADCAST, ETHERTYPE_ARP);
@@ -467,6 +459,32 @@ void populate_ethernet_header(uint8_t *buf, uint8_t *eth_shost, uint8_t *eth_dho
     memcpy(rep_eth_hdr->ether_shost, eth_shost, sizeof(uint8_t) * ETHER_ADDR_LEN);
     memcpy(rep_eth_hdr->ether_dhost, eth_dhost, sizeof(uint8_t) * ETHER_ADDR_LEN);
     rep_eth_hdr->ether_type = htons(ether_type);
+}
+
+/*
+ * Populate allocated buf with fresh ARP Header.
+ *
+ * buf:  Buffer with enough space for header
+ * hrd:  Hardware Type
+ * op:  ARP Operation Code
+ * sha:  Source Hardware Address
+ * sip:  Source IP Address
+ * dha:  Destination Hardware Address
+ * dip: Destination IP Address
+ */
+void populate_arp_header(uint8_t *buf, uint16_t hrd, uint16_t op, uint8_t *sha, uint32_t sip, uint8_t *dha, uint32_t dip)
+{
+    struct sr_arphdr *arp_hdr = (struct sr_arphdr *)buf;
+
+    arp_hdr->ar_hrd = htons(hrd);
+    arp_hdr->ar_pro = htons(ETHERTYPE_IP);
+    arp_hdr->ar_hln = ETHER_ADDR_LEN;
+    arp_hdr->ar_pln = IPv4_ADDR_LEN;
+    arp_hdr->ar_op = htons(op);
+    memcpy(arp_hdr->ar_sha, sha, ETHER_ADDR_LEN);
+    arp_hdr->ar_sip = sip;
+    memcpy(arp_hdr->ar_tha, dha, ETHER_ADDR_LEN);
+    arp_hdr->ar_tip = dip;
 }
 
 /*
