@@ -22,6 +22,7 @@
 #include "sr_rt.h"
 #include "sr_router.h"
 #include "sr_protocol.h"
+#include "sr_dumper.h"
 
 /* Macros to convert byte order */
 #define HOST_SHORT(PTR) (PTR = ntohs(PTR))
@@ -51,7 +52,7 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
 void populate_ethernet_header(uint8_t *buf, uint8_t *eth_shost, uint8_t *eth_dhost, uint16_t ether_type);
 uint16_t header_checksum(uint8_t *buf, uint16_t len, uint16_t cksum_offset, uint16_t cksum_length);
 uint16_t IP_header_checksum(struct ip *ip_hdr);
-uint16_t ICMP_header_checksum(struct ip *ip_hdr, struct icmp_hdr *icmp_hdr);
+uint16_t ICMP_header_checksum(struct icmp_hdr *icmp_hdr, uint16_t icmp_len);
 void populate_ip_header(uint8_t *buf, uint16_t data_len, uint8_t proto, struct in_addr src, struct in_addr dst);
 
 /*--------------------------------------------------------------------- 
@@ -237,13 +238,14 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
     if(sr_get_interface_for_ip(sr, ip_hdr->ip_dst.s_addr) != 0) {
         switch(ip_hdr->ip_p) {
             case IPPROTO_ICMP:
+            {
                 printf("IP Protocol: ICMP \n");
 
                 struct icmp_hdr *icmp_hdr = (struct icmp_hdr *)(((uint8_t *)ip_hdr) + ip_hdr->ip_hl * IPv4_WORD_SIZE);
                 uint16_t icmp_len = ntohs(ip_hdr->ip_len) - ip_hdr->ip_hl * IPv4_WORD_SIZE;
 
                 /* Validate Checksum */
-                if(ntohs(icmp_hdr->ic_sum) != ICMP_header_checksum(ip_hdr, icmp_hdr)) {
+                if(ntohs(icmp_hdr->ic_sum) != ICMP_header_checksum(icmp_hdr, icmp_len)) {
                     printf("!!! Invalid checksum. \n");
                     return;
                 }
@@ -266,7 +268,7 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
                         rep_icmp_hdr->ic_type = ICMP_ECHO_REPLY;
 
                         /* Calculate ICMP Checksum */
-                        rep_icmp_hdr->ic_sum = htons(ICMP_header_checksum(ip_hdr, icmp_hdr));
+                        rep_icmp_hdr->ic_sum = htons(ICMP_header_checksum(icmp_hdr, icmp_len));
 
                         /* Populate IP Header */
                         populate_ip_header(
@@ -286,18 +288,65 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
                             printf("*** -> Sent Packet of length: %d \n", len);
                         }
 
-                        break;
+                        return;
 
                     default:
                         printf("Unhandled ICMP Message Type. \n");
                 }
-                break;
+
+                return;
+            }
 
             case IPPROTO_TCP:
-                break;
-
             case IPPROTO_UDP:
-                break;
+            {
+                printf("IP Protocol: TCP/UDP. \n");
+                printf("Sending 'ICMP: Port Unreachable' to Source. \n");
+
+                int ip_len = (ip_hdr->ip_hl * IPv4_WORD_SIZE)
+                        + min(8, ip_hdr->ip_len - ip_hdr->ip_hl * IPv4_WORD_SIZE);
+                int icmp_len = sizeof(struct icmp_hdr)
+                        + sizeof(struct icmp_echo_hdr)
+                        + ip_len;
+                int len = sizeof(struct sr_ethernet_hdr)
+                        + sizeof(struct ip) + icmp_len;
+
+                uint8_t *buf = malloc(len);
+
+                /* Populate ICMP Header and Data*/
+                struct icmp_hdr *rep_icmp_hdr =
+                        (struct icmp_hdr *)(buf + sizeof(struct sr_ethernet_hdr) + sizeof(struct ip));
+
+                /* Copy old IP Header + 8 Data bytes into ICMP Data section */
+                memcpy(((uint8_t *)rep_icmp_hdr)
+                        + sizeof(struct icmp_hdr) + sizeof(struct icmp_echo_hdr),
+                        (uint8_t *)ip_hdr,
+                        ip_len);
+
+                /* Set ICMP Header Type and Checksum */
+                rep_icmp_hdr->ic_type = ICMP_DESTINATION_UNREACHABLE;
+                rep_icmp_hdr->ic_code = ICMP_CODE_PORT_UNREACHABLE;
+                rep_icmp_hdr->ic_sum = htons(ICMP_header_checksum(rep_icmp_hdr, icmp_len));
+
+                /* Populate IP Header */
+                populate_ip_header(buf + sizeof(struct sr_ethernet_hdr),
+                        icmp_len,
+                        IPPROTO_ICMP,
+                        ip_hdr->ip_dst,
+                        ip_hdr->ip_src);
+
+                /* Populate Ethernet Header */
+                populate_ethernet_header(buf, eth_hdr->ether_dhost, eth_hdr->ether_shost, ETHERTYPE_IP);
+
+                /* Send packet and free buffer */
+                int result = sr_send_packet(sr, buf, len, eth_if->name);
+                free(buf);
+                if(result == 0) {
+                    printf("*** -> Sent Packet of length: %d \n", len);
+                }
+
+                return;
+            }
 
             default:
                 printf("!!! Unhandled IP Protocol. \n");
@@ -355,9 +404,8 @@ uint16_t IP_header_checksum(struct ip *ip_hdr)
     return header_checksum((uint8_t *)ip_hdr, ip_hdr->ip_hl * IPv4_WORD_SIZE, IPv4_CHECKSUM_OFFSET, IPv4_CHECKSUM_LENGTH);
 }
 
-uint16_t ICMP_header_checksum(struct ip *ip_hdr, struct icmp_hdr *icmp_hdr)
+uint16_t ICMP_header_checksum(struct icmp_hdr *icmp_hdr, uint16_t icmp_len)
 {
-    uint16_t icmp_len = ntohs(ip_hdr->ip_len) - ip_hdr->ip_hl * IPv4_WORD_SIZE;
     return header_checksum((uint8_t *)icmp_hdr, icmp_len, ICMP_CHECKSUM_OFFSET, ICMP_CHECKSUM_LENGTH);
 }
 

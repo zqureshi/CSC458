@@ -153,6 +153,9 @@ struct sr_ethernet_hdr
 
 #define ICMP_ECHO_REQUEST 8
 #define ICMP_ECHO_REPLY   0
+#define ICMP_DESTINATION_UNREACHABLE 3
+
+#define ICMP_CODE_PORT_UNREACHABLE 3
 
 struct sr_arphdr 
 {
