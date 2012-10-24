@@ -124,6 +124,43 @@ void sr_add_rt_entry(struct sr_instance* sr, struct in_addr dest,
 
 } /* -- sr_add_entry -- */
 
+/*
+ * Get Longest-Prefix Routing Entry for the Destination IP given else NULL.
+ *
+ * sr:  Simlpe Router Instance
+ * eth_if:  Interface on which packet arrived
+ * dest:  Destination IP Address
+ */
+struct sr_rt *sr_get_next_hop(struct sr_instance *sr, struct sr_if *eth_if,
+        struct in_addr dest)
+{
+    struct sr_rt* rt_walker = sr->routing_table;
+    struct sr_rt* longest_match = NULL;
+
+    while(rt_walker)
+    {
+        /* Ignore Interface on which packet arrived */
+        if(!strncmp(eth_if->name, rt_walker->interface, sr_IFACE_NAMELEN)) {
+            goto rt_next_entry;
+        }
+
+        /* If routing entry is a prefix of destination and longest, then select */
+        if((ntohl(dest.s_addr) & ntohl(rt_walker->mask.s_addr))
+                == (ntohl(rt_walker->dest.s_addr) & ntohl(rt_walker->mask.s_addr))) {
+            if(longest_match == NULL) {
+                longest_match = rt_walker;
+            } else if(ntohl(rt_walker->mask.s_addr) > ntohl(longest_match->mask.s_addr)) {
+                longest_match = rt_walker;
+            }
+        }
+
+        rt_next_entry:
+        rt_walker = rt_walker->next;
+    }
+
+    return longest_match;
+}
+
 /*--------------------------------------------------------------------- 
  * Method:
  *

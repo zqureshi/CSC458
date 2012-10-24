@@ -356,6 +356,13 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
     }
 
     /* Else, forward packet after lookup in Routing Table */
+    struct sr_rt *next_hop = sr_get_next_hop(sr, eth_if, ip_hdr->ip_dst);
+
+    /* If next_hop is NULL, we didn't find a routing entry, drop packet */
+    if(next_hop == NULL) {
+        printf("!!! No Routing Entry, Dropping Packet. \n");
+        return;
+    }
 }
 
 /*

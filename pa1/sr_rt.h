@@ -40,6 +40,8 @@ struct sr_rt
 int sr_load_rt(struct sr_instance*,const char*);
 void sr_add_rt_entry(struct sr_instance*, struct in_addr,struct in_addr,
                   struct in_addr,char*);
+struct sr_rt *sr_get_next_hop(struct sr_instance *sr, struct sr_if *eth_if,
+        struct in_addr dest);
 void sr_print_routing_table(struct sr_instance* sr);
 void sr_print_routing_entry(struct sr_rt* entry);
 
