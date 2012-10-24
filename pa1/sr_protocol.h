@@ -152,7 +152,7 @@ struct sr_ethernet_hdr
 #define IPv4 4
 
 #define ICMP_ECHO_REQUEST 8
-#define ICMP_ECHO_REPLY   1
+#define ICMP_ECHO_REPLY   0
 
 struct sr_arphdr 
 {

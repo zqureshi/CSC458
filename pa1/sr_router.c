@@ -34,6 +34,7 @@
 #define IPv4_CHECKSUM_OFFSET 10
 #define IPv4_CHECKSUM_LENGTH 2
 #define IPv4_WORD_SIZE 4
+#define IPV4_TTL 64
 
 #define ICMP_CHECKSUM_OFFSET 2
 #define ICMP_CHECKSUM_LENGTH 2
@@ -232,9 +233,10 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
                 printf("IP Protocol: ICMP \n");
 
                 struct icmp_hdr *icmp_hdr = (struct icmp_hdr *)(((uint8_t *)ip_hdr) + ip_hdr->ip_hl * IPv4_WORD_SIZE);
+                uint16_t icmp_len = ntohs(ip_hdr->ip_len) - ip_hdr->ip_hl * IPv4_WORD_SIZE;
 
                 /* Validate Checksum */
-                if(ntohs(ntohs(icmp_hdr->ic_sum) != ICMP_header_checksum(ip_hdr, icmp_hdr))) {
+                if(ntohs(icmp_hdr->ic_sum) != ICMP_header_checksum(ip_hdr, icmp_hdr)) {
                     printf("!!! Invalid checksum. \n");
                     return;
                 }
@@ -242,6 +244,48 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
                 switch(icmp_hdr->ic_type) {
                     case ICMP_ECHO_REQUEST:
                         printf("ICMP Message Type: Echo Request \n");
+
+                        int len = sizeof(struct sr_ethernet_hdr) + sizeof(struct ip) + icmp_len;
+                        uint8_t *buf = (uint8_t *)malloc(len);
+
+                        /* Populate ICMP Header */
+                        struct icmp_hdr *rep_icmp_hdr =
+                                (struct icmp_hdr *)(buf + sizeof(struct sr_ethernet_hdr) + sizeof(struct ip));
+
+                        /* Copy existing packet since most of the info is the same */
+                        memcpy(rep_icmp_hdr, icmp_hdr, icmp_len);
+
+                        /* Update Type */
+                        rep_icmp_hdr->ic_type = ICMP_ECHO_REPLY;
+
+                        /* Calculate ICMP Checksum */
+                        rep_icmp_hdr->ic_sum = htons(ICMP_header_checksum(ip_hdr, icmp_hdr));
+
+                        /* Populate IP Header */
+                        struct ip *rep_ip_hdr = (struct ip *)(buf + sizeof(struct sr_ethernet_hdr));
+                        rep_ip_hdr->ip_v = IPv4;
+                        rep_ip_hdr->ip_hl = sizeof(struct ip)/IPv4_WORD_SIZE;
+                        rep_ip_hdr->ip_len = htons(sizeof(struct ip) + icmp_len);
+                        rep_ip_hdr->ip_id = 0x0000;
+                        rep_ip_hdr->ip_off = 0x0000;
+                        rep_ip_hdr->ip_ttl = IPV4_TTL;
+                        rep_ip_hdr->ip_p = IPPROTO_ICMP;
+                        rep_ip_hdr->ip_src = ip_hdr->ip_dst;
+                        rep_ip_hdr->ip_dst = ip_hdr->ip_src;
+
+                        /* Calculate Checksum */
+                        rep_ip_hdr->ip_sum = htons(IP_header_checksum(rep_ip_hdr));
+
+                        /* Populate Ethernet Header */
+                        populate_ethernet_header(buf, eth_hdr->ether_dhost, eth_hdr->ether_shost, ETHERTYPE_IP);
+
+                        /* Send packet and free buffer */
+                        int result = sr_send_packet(sr, buf, len, eth_if->name);
+                        free(buf);
+                        if(result == 0) {
+                            printf("*** -> Sent Packet of length: %d \n", len);
+                        }
+
                         break;
 
                     default:
