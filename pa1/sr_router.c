@@ -562,13 +562,15 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
 
     /* Else, forward packet after lookup in Routing Table */
     struct sr_rt *next_hop = sr_get_next_hop(sr, eth_if, ip_hdr->ip_dst);
-    struct sr_if *out_port = sr_get_interface(sr, next_hop->interface);
 
     /* If next_hop is NULL, we didn't find a routing entry, drop packet */
     if(next_hop == NULL) {
         printf("!!! No Routing Entry, Dropping Packet. \n");
         return;
     }
+
+    /* Fetch the interface to send packet from */
+    struct sr_if *out_port = sr_get_interface(sr, next_hop->interface);
 
     struct arp_entry arp_entry;
     if(!arp_lookup_entry(next_hop->gw.s_addr, &arp_entry, FALSE)) {
