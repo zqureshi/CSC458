@@ -48,6 +48,11 @@
 
 #define MAX_POOL_THREADS 100
 
+#define SEND_PACKET(sr, buf, len, interface) \
+    if(sr_send_packet((sr), (buf), (len), (interface)) == 0) { \
+        printf("*** -> Sent Packet of length: %d \n", (len)); \
+    } \
+
 /* Forward declarations */
 void sr_handlepacket_thread(gpointer data, gpointer user_data);
 void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
@@ -185,7 +190,7 @@ void sr_handlepacket(struct sr_instance* sr,
     assert(packet);
     assert(interface);
 
-    printf("*** -> Received packet of length %d \n", len);
+    printf("\n*** -> Received packet of length %d \n", len);
 
     /* Copy over input parameters for thread */
     struct sr_handlepacket_input *input = malloc(sizeof(struct sr_handlepacket_input));
@@ -296,11 +301,8 @@ void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
                 populate_ethernet_header(buf, t_eth_if->addr, eth_hdr->ether_shost, ETHERTYPE_ARP);
 
                 /* Send packet and free buffer */
-                int result = sr_send_packet(sr, buf, len, t_eth_if->name);
+                SEND_PACKET(sr, buf, len, t_eth_if->name);
                 free(buf);
-                if(result == 0) {
-                    printf("*** -> Sent Packet of length: %d \n", len);
-                }
             }
 
             /*
@@ -394,11 +396,8 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
                         populate_ethernet_header(buf, eth_hdr->ether_dhost, eth_hdr->ether_shost, ETHERTYPE_IP);
 
                         /* Send packet and free buffer */
-                        int result = sr_send_packet(sr, buf, len, eth_if->name);
+                        SEND_PACKET(sr, buf, len, eth_if->name);
                         free(buf);
-                        if(result == 0) {
-                            printf("*** -> Sent Packet of length: %d \n", len);
-                        }
 
                         return;
 
@@ -451,11 +450,8 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
                 populate_ethernet_header(buf, eth_hdr->ether_dhost, eth_hdr->ether_shost, ETHERTYPE_IP);
 
                 /* Send packet and free buffer */
-                int result = sr_send_packet(sr, buf, len, eth_if->name);
+                SEND_PACKET(sr, buf, len, eth_if->name);
                 free(buf);
-                if(result == 0) {
-                    printf("*** -> Sent Packet of length: %d \n", len);
-                }
 
                 return;
             }
@@ -499,11 +495,8 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         populate_ethernet_header(buf, out_port->addr, (uint8_t *)ETHER_ADDR_BROADCAST, ETHERTYPE_ARP);
 
         /* Send packet and free buffer */
-        int result = sr_send_packet(sr, buf, len, out_port->name);
+        SEND_PACKET(sr, buf, len, out_port->name);
         free(buf);
-        if(result == 0) {
-            printf("*** -> Sent Packet of length: %d \n", len);
-        }
 
         return;
     }
