@@ -45,6 +45,7 @@
 #define ETHER_ADDR_BROADCAST "\xff\xff\xff\xff\xff\xff"
 
 #define ARP_CACHE_TIMEOUT 15 * G_USEC_PER_SEC /* 15 Seconds */
+#define IP_QUEUE_TIMEOUT   5 * G_USEC_PER_SEC /*  5 Seconds */
 
 #define MAX_POOL_THREADS 100
 
@@ -92,6 +93,19 @@ struct sr_handlepacket_input
     char *interface;
 };
 
+/* IP Queue waiting for ARP Replies */
+GMutex *ip_queue_lock;
+GHashTable *ip_queue;
+
+struct ip_queue_entry
+{
+    uint32_t ip;       /* IP for ARP Request */
+    GMutex lock;       /* Lock to signal/wait on condition */
+    GCond wait_reply;  /* Wait until reply received or timeout */
+};
+
+/* ARP Cache Helpers */
+
 /*
  * Return TRUE if entry found and copy over to out, else FALSE.
  */
@@ -126,10 +140,51 @@ void arp_free_entry(gpointer value)
     free((struct arp_entry *)value);
 }
 
-void arp_print_entry(gpointer key, gpointer value, gpointer user_data)
+/* IP Queue Helpers */
+
+/*
+ * Return the GCond variable for an IP or create a new one if not present.
+ */
+struct ip_queue_entry *ip_queue_lookup(uint32_t ip)
 {
-    struct arp_entry *entry = (struct arp_entry *) value;
-    printf("IP: %ud, Age: %lld seconds \n", entry->ip, (g_get_monotonic_time() - entry->time)/G_USEC_PER_SEC );
+    g_mutex_lock(ip_queue_lock);
+    struct ip_queue_entry *entry = (struct ip_queue_entry *)g_hash_table_lookup(ip_queue, &ip);
+
+    if(!entry) {
+        /* If entry not present, create and insert new one */
+        entry = malloc(sizeof(struct ip_queue_entry));
+        entry->ip = ip;
+        g_mutex_init(&(entry->lock));
+        g_cond_init(&(entry->wait_reply));
+
+        g_hash_table_insert(ip_queue, &(entry->ip), entry);
+    }
+
+    g_mutex_unlock(ip_queue_lock);
+    return entry;
+}
+
+/*
+ * Print queue entries.
+ * Note: NOT to be called directly, use ip_print_queue
+ */
+void ip_queue_print_entry(gpointer key, gpointer value, gpointer user_data)
+{
+    struct ip_queue_entry *entry = (struct ip_queue_entry *)value;
+    struct in_addr ip = { entry->ip };
+
+    printf("Entry: IP = %s \n", inet_ntoa(ip));
+}
+
+/*
+ * Print all queue entry
+ */
+void ip_queue_print()
+{
+    g_mutex_lock(ip_queue_lock);
+    printf("IP Queue: \n");
+    g_hash_table_foreach(ip_queue, ip_queue_print_entry, NULL);
+    g_mutex_unlock(ip_queue_lock);
 }
 
 /*--------------------------------------------------------------------- 
@@ -150,6 +205,11 @@ void sr_init(struct sr_instance* sr)
     g_mutex_init(arp_cache_lock);
     arp_cache = g_hash_table_new_full(g_int_hash, g_int_equal, NULL, arp_free_entry);
 
+    /* Initialize IP Queue */
+    ip_queue_lock = g_new(GMutex, 1);
+    g_mutex_init(ip_queue_lock);
+    ip_queue = g_hash_table_new(g_int_hash, g_int_equal);
+
     /* Initialize ThreadPool */
     sr_thread_pool = g_thread_pool_new(sr_handlepacket_thread, NULL, MAX_POOL_THREADS, TRUE, FALSE);
 } /* -- sr_init -- */
@@ -159,6 +219,10 @@ void sr_destruct(struct sr_instance* sr)
     /* Free ARP Cache */
     g_hash_table_destroy(arp_cache);
     g_mutex_free(arp_cache_lock);
+
+    /* Free IP Queue */
+    g_hash_table_destroy(ip_queue);
+    g_mutex_free(ip_queue_lock);
 
     /* Free Thread Pool */
     g_thread_pool_free(sr_thread_pool, TRUE, FALSE);
@@ -342,7 +406,7 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
             return;
     }
 
-    /* Validate Checksum */
+    /* Validate IP Checksum */
     if(ntohs(ip_hdr->ip_sum) != IP_header_checksum(ip_hdr)) {
         printf("!!! Invalid checksum. \n");
         return;
@@ -358,7 +422,7 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
                 struct icmp_hdr *icmp_hdr = (struct icmp_hdr *)(((uint8_t *)ip_hdr) + ip_hdr->ip_hl * IPv4_WORD_SIZE);
                 uint16_t icmp_len = ntohs(ip_hdr->ip_len) - ip_hdr->ip_hl * IPv4_WORD_SIZE;
 
-                /* Validate Checksum */
+                /* Validate ICMP Checksum */
                 if(ntohs(icmp_hdr->ic_sum) != ICMP_header_checksum(icmp_hdr, icmp_len)) {
                     printf("!!! Invalid checksum. \n");
                     return;
@@ -472,8 +536,8 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         return;
     }
 
-    struct arp_entry entry;
-    if(!arp_lookup_entry(next_hop->gw.s_addr, &entry, TRUE)) {
+    struct arp_entry arp_entry;
+    if(!arp_lookup_entry(next_hop->gw.s_addr, &arp_entry, TRUE)) {
         /* Queue packet and send ARP Request */
         printf("No ARP Entry for Gateway, queuing packet. \n");
 
@@ -497,8 +561,23 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         /* Send packet and free buffer */
         SEND_PACKET(sr, buf, len, out_port->name);
         free(buf);
+    }
 
-        return;
+    /* Print IP Queue */
+    ip_queue_print();
+
+    /* Wait for ARP Reply or Timeout */
+    struct ip_queue_entry *ip_entry = ip_queue_lookup(next_hop->gw.s_addr);
+    gint64 end_time = g_get_monotonic_time() + IP_QUEUE_TIMEOUT;
+
+    g_mutex_lock(&(ip_entry->lock));
+    while(!arp_lookup_entry(next_hop->gw.s_addr, &arp_entry, TRUE)) {
+        if(!g_cond_wait_until(&(ip_entry->wait_reply), &(ip_entry->lock), end_time)) {
+            printf("!!! Packet timed out waiting for ARP Reply from %s, dropping. \n", inet_ntoa(next_hop->gw));
+
+            g_mutex_unlock(&(ip_entry->lock));
+            return;
+        }
     }
 }
 
