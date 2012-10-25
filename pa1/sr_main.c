@@ -165,6 +165,9 @@ int main(int argc, char **argv)
     /* -- whizbang main loop ;-) */
     while( sr_read_from_server(&sr) == 1);
 
+    /* call router destructor */
+    sr_destruct(&sr);
+
     sr_destroy_instance(&sr);
 
     return 0;

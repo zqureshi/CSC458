@@ -42,11 +42,14 @@
 #define ICMP_CHECKSUM_OFFSET 2
 #define ICMP_CHECKSUM_LENGTH 2
 
-#define ARP_CACHE_TIMEOUT 15 * G_USEC_PER_SEC /* 15 Seconds */
-
 #define ETHER_ADDR_BROADCAST "\xff\xff\xff\xff\xff\xff"
 
+#define ARP_CACHE_TIMEOUT 15 * G_USEC_PER_SEC /* 15 Seconds */
+
+#define MAX_POOL_THREADS 100
+
 /* Forward declarations */
+void sr_handlepacket_thread(gpointer data, gpointer user_data);
 void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
         struct sr_if *eth_if, /* Network byte order */
         struct sr_ethernet_hdr *eth_hdr, /* Network byte order */
@@ -63,6 +66,7 @@ void populate_ip_header(uint8_t *buf, uint16_t data_len, uint8_t proto, struct i
 void populate_arp_header(uint8_t *buf, uint16_t hrd, uint16_t op, uint8_t *sha, uint32_t sip, uint8_t *dha, uint32_t dip);
 
 /* ARP Cache */
+GMutex *arp_cache_lock;
 GHashTable *arp_cache;
 
 struct arp_entry
@@ -72,11 +76,23 @@ struct arp_entry
     gint64 time;  /* Time when cache entry was last refreshed */
 };
 
+/* Threadpool */
+GThreadPool *sr_thread_pool;
+
+struct sr_handlepacket_input
+{
+    struct sr_instance *sr;
+    uint8_t *packet;
+    unsigned int len;
+    char *interface;
+};
+
 /*
  * Return TRUE if entry found and copy over to out, else FALSE.
  */
-int arp_lookup_entry(uint32_t ip, struct arp_entry *out)
+int arp_lookup_entry(uint32_t ip, struct arp_entry *out, int refresh)
 {
+    g_mutex_lock(arp_cache_lock);
     struct arp_entry *entry = g_hash_table_lookup(arp_cache, &ip);
     int found = FALSE;
 
@@ -86,16 +102,20 @@ int arp_lookup_entry(uint32_t ip, struct arp_entry *out)
             printf("ARP Cache: Expired Entry \n");
             g_hash_table_remove(arp_cache, &ip);
         } else {
-            printf("ARP Cache: Renew Entry \n");
-            entry->time = g_get_monotonic_time();
+            if(refresh == TRUE) {
+                printf("ARP Cache: Renew Entry \n");
+                entry->time = g_get_monotonic_time();
+            }
             memcpy(out, entry, sizeof(struct arp_entry));
             found = TRUE;
         }
     }
+    g_mutex_unlock(arp_cache_lock);
 
     return found;
 };
 
+/* NOT to be directly called, only invoked on removal inside arp_lookup_entry / arp_insert_entry */
 void arp_free_entry(gpointer value)
 {
     free((struct arp_entry *)value);
@@ -121,10 +141,23 @@ void sr_init(struct sr_instance* sr)
     assert(sr);
 
     /* Initialize ARP Cache */
+    arp_cache_lock = g_new(GMutex, 1);
+    g_mutex_init(arp_cache_lock);
     arp_cache = g_hash_table_new_full(g_int_hash, g_int_equal, NULL, arp_free_entry);
+
+    /* Initialize ThreadPool */
+    sr_thread_pool = g_thread_pool_new(sr_handlepacket_thread, NULL, MAX_POOL_THREADS, TRUE, FALSE);
 } /* -- sr_init -- */
 
+void sr_destruct(struct sr_instance* sr)
+{
+    /* Free ARP Cache */
+    g_hash_table_destroy(arp_cache);
+    g_mutex_free(arp_cache_lock);
 
+    /* Free Thread Pool */
+    g_thread_pool_free(sr_thread_pool, TRUE, FALSE);
+}
 
 /*---------------------------------------------------------------------
  * Method: sr_handlepacket(uint8_t* p,char* interface)
@@ -153,6 +186,28 @@ void sr_handlepacket(struct sr_instance* sr,
     assert(interface);
 
     printf("*** -> Received packet of length %d \n", len);
+
+    /* Copy over input parameters for thread */
+    struct sr_handlepacket_input *input = malloc(sizeof(struct sr_handlepacket_input));
+
+    input->sr = sr;
+    input->len = len;
+    input->packet = malloc(sizeof(uint8_t) * len);
+    memcpy(input->packet, packet, len);
+    input->interface = malloc(strlen(interface)+1);
+    strcpy(input->interface, interface);
+
+    if(!g_thread_pool_push(sr_thread_pool, (gpointer)input, NULL)) {
+        printf("!!! Error pushing packet to thread pool for processing. \n");
+    };
+}/* end sr_handlpacket */
+
+void sr_handlepacket_thread(gpointer data, gpointer user_data)
+{
+    struct sr_handlepacket_input *input = (struct sr_handlepacket_input *)data;
+    struct sr_instance* sr = input->sr;
+    uint8_t * packet = input->packet;
+    char* interface = input->interface;
 
     /* Ethernet Interface */
     struct sr_if *eth_if = (struct sr_if *) sr_get_interface(sr, interface);
@@ -187,7 +242,12 @@ void sr_handlepacket(struct sr_instance* sr,
         default:
             printf("!!! Unrecognized Protocol Type: %d \n", eth_hdr->ether_type);
     }
-}/* end sr_handlpacket */
+
+    /* Free up all input */
+    free(input->interface);
+    free(input->packet);
+    free(input);
+}
 
 /*
  * Handle ARP protocol packets
@@ -417,7 +477,7 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
     }
 
     struct arp_entry entry;
-    if(!arp_lookup_entry(next_hop->gw.s_addr, &entry)) {
+    if(!arp_lookup_entry(next_hop->gw.s_addr, &entry, TRUE)) {
         /* Queue packet and send ARP Request */
         printf("No ARP Entry for Gateway, queuing packet. \n");
 
