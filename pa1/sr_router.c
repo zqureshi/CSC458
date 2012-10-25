@@ -571,6 +571,7 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
 
     /* Else, forward packet after lookup in Routing Table */
     struct sr_rt *next_hop = sr_get_next_hop(sr, eth_if, ip_hdr->ip_dst);
+    struct sr_if *out_port = sr_get_interface(sr, next_hop->interface);
 
     /* If next_hop is NULL, we didn't find a routing entry, drop packet */
     if(next_hop == NULL) {
@@ -586,7 +587,6 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         /* Send ARP Request for Gateway */
         int len = sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr);
         uint8_t *buf = malloc(len);
-        struct sr_if *out_port = sr_get_interface(sr, next_hop->interface);
 
         /* Populate ARP Header */
         populate_arp_header(buf + sizeof(struct sr_ethernet_hdr),
@@ -605,9 +605,6 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         free(buf);
     }
 
-    /* Print IP Queue */
-    ip_queue_print();
-
     /* Wait for ARP Reply or Timeout */
     struct ip_queue_entry *ip_entry = ip_queue_lookup(next_hop->gw.s_addr);
     gint64 end_time = g_get_monotonic_time() + IP_QUEUE_TIMEOUT;
@@ -623,6 +620,28 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
 
     /* If here, means we've received an ARP Reply */
     printf("Received ARP Reply from Gateway %s, forwarding packet. \n", inet_ntoa(next_hop->gw));
+
+    /* Decrement TTL and forward packet */
+    if(ip_hdr->ip_ttl <= 1) {
+        /* TTL: 0 or 1, drop packet and send ICMP*/
+    } else {
+        /* Otherwise Decrement TTL, calculate new checksum and forward */
+
+        int len = sizeof(struct sr_ethernet_hdr) + ntohs(ip_hdr->ip_len);
+        uint8_t *buf = malloc(len);
+
+        /* Copy IP Header + Data and decrement TTL*/
+        struct ip *rep_ip_hdr = (struct ip*)(buf + sizeof(struct sr_ethernet_hdr));
+        memcpy(rep_ip_hdr, ip_hdr, ntohs(ip_hdr->ip_len));
+        rep_ip_hdr->ip_ttl--;
+        rep_ip_hdr->ip_sum = htons(IP_header_checksum(rep_ip_hdr));
+
+        /* Populate Ethernet Header */
+        populate_ethernet_header(buf, out_port->addr, arp_entry.ha, ETHERTYPE_IP);
+
+        SEND_PACKET(sr, buf, len,out_port->name);
+        free(buf);
+    }
 
     sr_handleproto_IP_end:
     g_mutex_unlock(&(ip_entry->lock));
