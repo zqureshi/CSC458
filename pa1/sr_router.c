@@ -64,12 +64,15 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         struct sr_if *eth_if, /* Network byte order */
         struct sr_ethernet_hdr *eth_hdr, /* Network byte order */
         struct ip *ip_hdr /* Network byte order */);
+
 void populate_ethernet_header(uint8_t *buf, uint8_t *eth_shost, uint8_t *eth_dhost, uint16_t ether_type);
+void populate_ip_header(uint8_t *buf, uint16_t data_len, uint8_t proto, struct in_addr src, struct in_addr dst);
+void populate_arp_header(uint8_t *buf, uint16_t hrd, uint16_t op, uint8_t *sha, uint32_t sip, uint8_t *dha, uint32_t dip);
+void populate_icmp_error(uint8_t *buf, struct ip *ip_hdr, uint8_t type, uint8_t code);
+
 uint16_t header_checksum(uint8_t *buf, uint16_t len, uint16_t cksum_offset, uint16_t cksum_length);
 uint16_t IP_header_checksum(struct ip *ip_hdr);
 uint16_t ICMP_header_checksum(struct icmp_hdr *icmp_hdr, uint16_t icmp_len);
-void populate_ip_header(uint8_t *buf, uint16_t data_len, uint8_t proto, struct in_addr src, struct in_addr dst);
-void populate_arp_header(uint8_t *buf, uint16_t hrd, uint16_t op, uint8_t *sha, uint32_t sip, uint8_t *dha, uint32_t dip);
 
 /* ARP Cache */
 GMutex *arp_cache_lock;
@@ -530,20 +533,8 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
 
                 uint8_t *buf = malloc(len);
 
-                /* Populate ICMP Header and Data*/
-                struct icmp_hdr *rep_icmp_hdr =
-                        (struct icmp_hdr *)(buf + sizeof(struct sr_ethernet_hdr) + sizeof(struct ip));
-
-                /* Copy old IP Header + 8 Data bytes into ICMP Data section */
-                memcpy(((uint8_t *)rep_icmp_hdr)
-                        + sizeof(struct icmp_hdr) + sizeof(struct icmp_echo_hdr),
-                        (uint8_t *)ip_hdr,
-                        ip_len);
-
-                /* Set ICMP Header Type and Checksum */
-                rep_icmp_hdr->ic_type = ICMP_DESTINATION_UNREACHABLE;
-                rep_icmp_hdr->ic_code = ICMP_CODE_PORT_UNREACHABLE;
-                rep_icmp_hdr->ic_sum = htons(ICMP_header_checksum(rep_icmp_hdr, icmp_len));
+                /* Populate ICMP Error Message */
+                populate_icmp_error(buf, ip_hdr, ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_PORT_UNREACHABLE);
 
                 /* Populate IP Header */
                 populate_ip_header(buf + sizeof(struct sr_ethernet_hdr),
@@ -639,7 +630,7 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         /* Populate Ethernet Header */
         populate_ethernet_header(buf, out_port->addr, arp_entry.ha, ETHERTYPE_IP);
 
-        SEND_PACKET(sr, buf, len,out_port->name);
+        SEND_PACKET(sr, buf, len, out_port->name);
         free(buf);
     }
 
@@ -712,6 +703,30 @@ void populate_ip_header(uint8_t *buf, uint16_t data_len, uint8_t proto, struct i
 
     /* Calculate Checksum */
     ip_hdr->ip_sum = htons(IP_header_checksum(ip_hdr));
+}
+
+void populate_icmp_error(uint8_t *buf, struct ip *ip_hdr, uint8_t type, uint8_t code)
+{
+    int ip_len = (ip_hdr->ip_hl * IPv4_WORD_SIZE)
+                        + min(8, ip_hdr->ip_len - ip_hdr->ip_hl * IPv4_WORD_SIZE);
+    int icmp_len = sizeof(struct icmp_hdr)
+            + sizeof(struct icmp_echo_hdr)
+            + ip_len;
+
+    /* Populate ICMP Header and Data*/
+    struct icmp_hdr *rep_icmp_hdr =
+            (struct icmp_hdr *)(buf + sizeof(struct sr_ethernet_hdr) + sizeof(struct ip));
+
+    /* Copy old IP Header + 8 Data bytes into ICMP Data section */
+    memcpy(((uint8_t *)rep_icmp_hdr)
+            + sizeof(struct icmp_hdr) + sizeof(struct icmp_echo_hdr),
+            (uint8_t *)ip_hdr,
+            ip_len);
+
+    /* Set ICMP Header Type and Checksum */
+    rep_icmp_hdr->ic_type = type;
+    rep_icmp_hdr->ic_code = code;
+    rep_icmp_hdr->ic_sum = htons(ICMP_header_checksum(rep_icmp_hdr, icmp_len));
 }
 
 uint16_t IP_header_checksum(struct ip *ip_hdr)
