@@ -134,6 +134,25 @@ int arp_lookup_entry(uint32_t ip, struct arp_entry *out, int refresh)
     return found;
 };
 
+/*
+ * Insert ARP Cache entry with given IP and Hardware Address and current time.
+ */
+void arp_insert_entry(uint32_t ip, uint8_t *ha)
+{
+    g_mutex_lock(arp_cache_lock);
+
+    /* Create entry */
+    struct arp_entry *entry = malloc(sizeof(struct arp_entry));
+    memcpy(entry->ha, ha, ETHER_ADDR_LEN);
+    entry->ip = ip;
+    entry->time = g_get_monotonic_time();
+
+    /* Insert it into cache*/
+    g_hash_table_insert(arp_cache, &(entry->ip), entry);
+
+    g_mutex_unlock(arp_cache_lock);
+}
+
 /* NOT to be directly called, only invoked on removal inside arp_lookup_entry / arp_insert_entry */
 void arp_free_entry(gpointer value)
 {
@@ -162,6 +181,24 @@ struct ip_queue_entry *ip_queue_lookup(uint32_t ip)
 
     g_mutex_unlock(ip_queue_lock);
     return entry;
+}
+
+/*
+ * Signal all threads that were waiting for an ARP Reply from IP.
+ */
+void ip_queue_broadcast(uint32_t ip)
+{
+    g_mutex_lock(ip_queue_lock);
+    struct ip_queue_entry *entry = (struct ip_queue_entry *)g_hash_table_lookup(ip_queue, &ip);
+
+    /* Gain lock to signal GCond */
+    g_mutex_lock(&(entry->lock));
+    g_cond_broadcast(&(entry->wait_reply));
+
+    /* Release GCond lock */
+    g_mutex_unlock(&(entry->lock));
+
+    g_mutex_unlock(ip_queue_lock);
 }
 
 /*
@@ -378,6 +415,11 @@ void sr_handleproto_ARP(struct sr_instance *sr, /* Native byte order */
         }
 
         case ARP_REPLY: /* Handle ARP Reply */
+            printf("ARP Operation: Reply \n");
+
+            /* Insert into ARP Cache and signal waiting threads */
+            arp_insert_entry(arp_hdr->ar_sip, arp_hdr->ar_sha);
+            ip_queue_broadcast(arp_hdr->ar_sip);
             break;
 
         default:
@@ -537,7 +579,7 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
     }
 
     struct arp_entry arp_entry;
-    if(!arp_lookup_entry(next_hop->gw.s_addr, &arp_entry, TRUE)) {
+    if(!arp_lookup_entry(next_hop->gw.s_addr, &arp_entry, FALSE)) {
         /* Queue packet and send ARP Request */
         printf("No ARP Entry for Gateway, queuing packet. \n");
 
@@ -575,10 +617,15 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         if(!g_cond_wait_until(&(ip_entry->wait_reply), &(ip_entry->lock), end_time)) {
             printf("!!! Packet timed out waiting for ARP Reply from %s, dropping. \n", inet_ntoa(next_hop->gw));
 
-            g_mutex_unlock(&(ip_entry->lock));
-            return;
+            goto sr_handleproto_IP_end;
         }
     }
+
+    /* If here, means we've received an ARP Reply */
+    printf("Received ARP Reply from Gateway %s, forwarding packet. \n", inet_ntoa(next_hop->gw));
+
+    sr_handleproto_IP_end:
+    g_mutex_unlock(&(ip_entry->lock));
 }
 
 /*
