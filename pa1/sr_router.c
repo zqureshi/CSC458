@@ -615,6 +615,35 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
     /* Decrement TTL and forward packet */
     if(ip_hdr->ip_ttl <= 1) {
         /* TTL: 0 or 1, drop packet and send ICMP*/
+        printf("TTL: %d, sending ICMP Time Exceeded. \n", ip_hdr->ip_ttl);
+
+        int ip_len = (ip_hdr->ip_hl * IPv4_WORD_SIZE)
+                + min(8, ip_hdr->ip_len - ip_hdr->ip_hl * IPv4_WORD_SIZE);
+        int icmp_len = sizeof(struct icmp_hdr)
+                + sizeof(struct icmp_echo_hdr)
+                + ip_len;
+        int len = sizeof(struct sr_ethernet_hdr)
+                + sizeof(struct ip) + icmp_len;
+
+        uint8_t *buf = malloc(len);
+
+        /* Populate ICMP Error Message */
+        populate_icmp_error(buf, ip_hdr, ICMP_TIME_EXCEEDED, ICMP_CODE_TTL_ZERO);
+
+        /* Populate IP Header */
+        populate_ip_header(buf + sizeof(struct sr_ethernet_hdr),
+                icmp_len,
+                IPPROTO_ICMP,
+                ip_hdr->ip_dst,
+                ip_hdr->ip_src);
+
+        /* Populate Ethernet Header */
+        populate_ethernet_header(buf, eth_hdr->ether_dhost, eth_hdr->ether_shost, ETHERTYPE_IP);
+
+        /* Send packet and free buffer */
+        SEND_PACKET(sr, buf, len, eth_if->name);
+        free(buf);
+
     } else {
         /* Otherwise Decrement TTL, calculate new checksum and forward */
 
