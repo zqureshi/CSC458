@@ -560,7 +560,42 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         return;
     }
 
-    /* Else, forward packet after lookup in Routing Table */
+    /* Packet was not destined for this host, forward to destination */
+
+    /* Check TTL First */
+    if(ip_hdr->ip_ttl <= 1) {
+        /* TTL: 0 or 1, drop packet and send ICMP*/
+        printf("TTL: %d, sending ICMP Time Exceeded. \n", ip_hdr->ip_ttl);
+
+        int ip_len = (ip_hdr->ip_hl * IPv4_WORD_SIZE)
+                + min(8, ip_hdr->ip_len - ip_hdr->ip_hl * IPv4_WORD_SIZE);
+        int icmp_len = sizeof(struct icmp_hdr)
+                + sizeof(struct icmp_echo_hdr)
+                + ip_len;
+        int len = sizeof(struct sr_ethernet_hdr)
+                + sizeof(struct ip) + icmp_len;
+
+        uint8_t *buf = malloc(len);
+
+        /* Populate ICMP Error Message */
+        populate_icmp_error(buf, ip_hdr, ICMP_TIME_EXCEEDED, ICMP_CODE_TTL_ZERO);
+
+        /* Populate IP Header */
+        populate_ip_header(buf + sizeof(struct sr_ethernet_hdr),
+                icmp_len,
+                IPPROTO_ICMP,
+                ip_hdr->ip_dst,
+                ip_hdr->ip_src);
+
+        /* Populate Ethernet Header */
+        populate_ethernet_header(buf, eth_hdr->ether_dhost, eth_hdr->ether_shost, ETHERTYPE_IP);
+
+        /* Send packet and free buffer */
+        SEND_PACKET(sr, buf, len, eth_if->name);
+        free(buf);
+    }
+
+    /* Forward packet after lookup in Routing Table */
     struct sr_rt *next_hop = sr_get_next_hop(sr, eth_if, ip_hdr->ip_dst);
 
     /* If next_hop is NULL, we didn't find a routing entry, drop packet */
@@ -617,56 +652,21 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         printf("Received ARP Reply from Gateway %s, forwarding packet. \n", inet_ntoa(next_hop->gw));
     }
 
-    /* Decrement TTL and forward packet */
-    if(ip_hdr->ip_ttl <= 1) {
-        /* TTL: 0 or 1, drop packet and send ICMP*/
-        printf("TTL: %d, sending ICMP Time Exceeded. \n", ip_hdr->ip_ttl);
+    /* Decrement TTL, calculate new checksum and forward */
+    int len = sizeof(struct sr_ethernet_hdr) + ntohs(ip_hdr->ip_len);
+    uint8_t *buf = malloc(len);
 
-        int ip_len = (ip_hdr->ip_hl * IPv4_WORD_SIZE)
-                + min(8, ip_hdr->ip_len - ip_hdr->ip_hl * IPv4_WORD_SIZE);
-        int icmp_len = sizeof(struct icmp_hdr)
-                + sizeof(struct icmp_echo_hdr)
-                + ip_len;
-        int len = sizeof(struct sr_ethernet_hdr)
-                + sizeof(struct ip) + icmp_len;
+    /* Copy IP Header + Data and decrement TTL*/
+    struct ip *rep_ip_hdr = (struct ip*)(buf + sizeof(struct sr_ethernet_hdr));
+    memcpy(rep_ip_hdr, ip_hdr, ntohs(ip_hdr->ip_len));
+    rep_ip_hdr->ip_ttl--;
+    rep_ip_hdr->ip_sum = htons(IP_header_checksum(rep_ip_hdr));
 
-        uint8_t *buf = malloc(len);
+    /* Populate Ethernet Header */
+    populate_ethernet_header(buf, out_port->addr, arp_entry.ha, ETHERTYPE_IP);
 
-        /* Populate ICMP Error Message */
-        populate_icmp_error(buf, ip_hdr, ICMP_TIME_EXCEEDED, ICMP_CODE_TTL_ZERO);
-
-        /* Populate IP Header */
-        populate_ip_header(buf + sizeof(struct sr_ethernet_hdr),
-                icmp_len,
-                IPPROTO_ICMP,
-                ip_hdr->ip_dst,
-                ip_hdr->ip_src);
-
-        /* Populate Ethernet Header */
-        populate_ethernet_header(buf, eth_hdr->ether_dhost, eth_hdr->ether_shost, ETHERTYPE_IP);
-
-        /* Send packet and free buffer */
-        SEND_PACKET(sr, buf, len, eth_if->name);
-        free(buf);
-
-    } else {
-        /* Otherwise Decrement TTL, calculate new checksum and forward */
-
-        int len = sizeof(struct sr_ethernet_hdr) + ntohs(ip_hdr->ip_len);
-        uint8_t *buf = malloc(len);
-
-        /* Copy IP Header + Data and decrement TTL*/
-        struct ip *rep_ip_hdr = (struct ip*)(buf + sizeof(struct sr_ethernet_hdr));
-        memcpy(rep_ip_hdr, ip_hdr, ntohs(ip_hdr->ip_len));
-        rep_ip_hdr->ip_ttl--;
-        rep_ip_hdr->ip_sum = htons(IP_header_checksum(rep_ip_hdr));
-
-        /* Populate Ethernet Header */
-        populate_ethernet_header(buf, out_port->addr, arp_entry.ha, ETHERTYPE_IP);
-
-        SEND_PACKET(sr, buf, len, out_port->name);
-        free(buf);
-    }
+    SEND_PACKET(sr, buf, len, out_port->name);
+    free(buf);
 
     sr_handleproto_IP_end:
 
