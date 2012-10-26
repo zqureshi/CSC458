@@ -601,10 +601,11 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         populate_icmp_error(buf, ip_hdr, ICMP_TIME_EXCEEDED, ICMP_CODE_TTL_ZERO);
 
         /* Populate IP Header */
+        struct in_addr eth_if_addr = { eth_if->ip };
         populate_ip_header(buf + sizeof(struct sr_ethernet_hdr),
                 icmp_len,
                 IPPROTO_ICMP,
-                ip_hdr->ip_dst,
+                eth_if_addr,
                 ip_hdr->ip_src);
 
         /* Populate Ethernet Header */
@@ -665,10 +666,11 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
                 populate_icmp_error(buf, ip_hdr, ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_HOST_UNREACHABLE);
 
                 /* Populate IP Header */
+                struct in_addr eth_if_addr = { eth_if->ip };
                 populate_ip_header(buf + sizeof(struct sr_ethernet_hdr),
                         icmp_len,
                         IPPROTO_ICMP,
-                        ip_hdr->ip_dst,
+                        eth_if_addr,
                         ip_hdr->ip_src);
 
                 /* Populate Ethernet Header */
