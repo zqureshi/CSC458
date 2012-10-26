@@ -573,7 +573,10 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
     struct sr_if *out_port = sr_get_interface(sr, next_hop->interface);
 
     struct arp_entry arp_entry;
-    if(!arp_lookup_entry(next_hop->gw.s_addr, &arp_entry, FALSE)) {
+    int arp_lookup = arp_lookup_entry(next_hop->gw.s_addr, &arp_entry, TRUE);
+
+    struct ip_queue_entry *ip_entry = NULL;
+    if(!arp_lookup) {
         /* Queue packet and send ARP Request */
         printf("No ARP Entry for Gateway, queuing packet. \n");
 
@@ -596,23 +599,23 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         /* Send packet and free buffer */
         SEND_PACKET(sr, buf, len, out_port->name);
         free(buf);
-    }
 
-    /* Wait for ARP Reply or Timeout */
-    struct ip_queue_entry *ip_entry = ip_queue_lookup(next_hop->gw.s_addr);
-    gint64 end_time = g_get_monotonic_time() + IP_QUEUE_TIMEOUT;
+        /* Wait for ARP Reply or Timeout */
+        ip_entry = ip_queue_lookup(next_hop->gw.s_addr);
+        gint64 end_time = g_get_monotonic_time() + IP_QUEUE_TIMEOUT;
 
-    g_mutex_lock(&(ip_entry->lock));
-    while(!arp_lookup_entry(next_hop->gw.s_addr, &arp_entry, TRUE)) {
-        if(!g_cond_wait_until(&(ip_entry->wait_reply), &(ip_entry->lock), end_time)) {
-            printf("!!! Packet timed out waiting for ARP Reply from %s, dropping. \n", inet_ntoa(next_hop->gw));
+        g_mutex_lock(&(ip_entry->lock));
+        while(!arp_lookup_entry(next_hop->gw.s_addr, &arp_entry, TRUE)) {
+            if(!g_cond_wait_until(&(ip_entry->wait_reply), &(ip_entry->lock), end_time)) {
+                printf("!!! Packet timed out waiting for ARP Reply from %s, dropping. \n", inet_ntoa(next_hop->gw));
 
-            goto sr_handleproto_IP_end;
+                goto sr_handleproto_IP_end;
+            }
         }
-    }
 
-    /* If here, means we've received an ARP Reply */
-    printf("Received ARP Reply from Gateway %s, forwarding packet. \n", inet_ntoa(next_hop->gw));
+        /* If here, means we received an ARP Reply */
+        printf("Received ARP Reply from Gateway %s, forwarding packet. \n", inet_ntoa(next_hop->gw));
+    }
 
     /* Decrement TTL and forward packet */
     if(ip_hdr->ip_ttl <= 1) {
@@ -666,7 +669,10 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
     }
 
     sr_handleproto_IP_end:
-    g_mutex_unlock(&(ip_entry->lock));
+
+    if(!arp_lookup) {
+        g_mutex_unlock(&(ip_entry->lock));
+    }
 }
 
 /*
