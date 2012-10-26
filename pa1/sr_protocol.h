@@ -157,6 +157,7 @@ struct sr_ethernet_hdr
 #define ICMP_TIME_EXCEEDED 11
 
 #define ICMP_CODE_PORT_UNREACHABLE 3
+#define ICMP_CODE_HOST_UNREACHABLE 1
 #define ICMP_CODE_TTL_ZERO 0
 
 struct sr_arphdr 

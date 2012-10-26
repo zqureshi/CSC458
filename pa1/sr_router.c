@@ -643,6 +643,34 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
         while(!arp_lookup_entry(next_hop->gw.s_addr, &arp_entry, TRUE)) {
             if(!g_cond_wait_until(&(ip_entry->wait_reply), &(ip_entry->lock), end_time)) {
                 printf("!!! Packet timed out waiting for ARP Reply from %s, dropping. \n", inet_ntoa(next_hop->gw));
+                printf("!!! Sending ICMP Host Unreachable to Source. \n");
+
+                int ip_len = (ip_hdr->ip_hl * IPv4_WORD_SIZE)
+                + min(8, ip_hdr->ip_len - ip_hdr->ip_hl * IPv4_WORD_SIZE);
+                int icmp_len = sizeof(struct icmp_hdr)
+                        + sizeof(struct icmp_echo_hdr)
+                        + ip_len;
+                int len = sizeof(struct sr_ethernet_hdr)
+                        + sizeof(struct ip) + icmp_len;
+
+                uint8_t *buf = malloc(len);
+
+                /* Populate ICMP Error Message */
+                populate_icmp_error(buf, ip_hdr, ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_HOST_UNREACHABLE);
+
+                /* Populate IP Header */
+                populate_ip_header(buf + sizeof(struct sr_ethernet_hdr),
+                        icmp_len,
+                        IPPROTO_ICMP,
+                        ip_hdr->ip_dst,
+                        ip_hdr->ip_src);
+
+                /* Populate Ethernet Header */
+                populate_ethernet_header(buf, eth_hdr->ether_dhost, eth_hdr->ether_shost, ETHERTYPE_IP);
+
+                /* Send packet and free buffer */
+                SEND_PACKET(sr, buf, len, eth_if->name);
+                free(buf);
 
                 goto sr_handleproto_IP_end;
             }
