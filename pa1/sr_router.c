@@ -47,7 +47,7 @@
 #define ARP_CACHE_TIMEOUT 15 * G_USEC_PER_SEC /* 15 Seconds */
 #define IP_QUEUE_TIMEOUT   5 * G_USEC_PER_SEC /*  5 Seconds */
 
-#define MAX_POOL_THREADS 10
+#define MAX_POOL_THREADS 1
 
 #define SEND_PACKET(sr, buf, len, interface) \
     if(sr_send_packet((sr), (buf), (len), (interface)) == 0) { \
@@ -296,28 +296,6 @@ void sr_handlepacket(struct sr_instance* sr,
 
     printf("\n*** -> Received packet of length %d \n", len);
 
-    /* Copy over input parameters for thread */
-    struct sr_handlepacket_input *input = malloc(sizeof(struct sr_handlepacket_input));
-
-    input->sr = sr;
-    input->len = len;
-    input->packet = malloc(sizeof(uint8_t) * len);
-    memcpy(input->packet, packet, len);
-    input->interface = malloc(strlen(interface)+1);
-    strcpy(input->interface, interface);
-
-    if(!g_thread_pool_push(sr_thread_pool, (gpointer)input, NULL)) {
-        printf("!!! Error pushing packet to thread pool for processing. \n");
-    };
-}/* end sr_handlpacket */
-
-void sr_handlepacket_thread(gpointer data, gpointer user_data)
-{
-    struct sr_handlepacket_input *input = (struct sr_handlepacket_input *)data;
-    struct sr_instance* sr = input->sr;
-    uint8_t * packet = input->packet;
-    char* interface = input->interface;
-
     /* Ethernet Interface */
     struct sr_if *eth_if = (struct sr_if *) sr_get_interface(sr, interface);
 
@@ -341,6 +319,45 @@ void sr_handlepacket_thread(gpointer data, gpointer user_data)
             break;
 
         case ETHERTYPE_IP:
+        {
+            /* Copy over input parameters for thread */
+            struct sr_handlepacket_input *input = malloc(sizeof(struct sr_handlepacket_input));
+
+            input->sr = sr;
+            input->len = len;
+            input->packet = malloc(sizeof(uint8_t) * len);
+            memcpy(input->packet, packet, len);
+            input->interface = malloc(strlen(interface)+1);
+            strcpy(input->interface, interface);
+
+            if(!g_thread_pool_push(sr_thread_pool, (gpointer)input, NULL)) {
+                printf("!!! Error pushing packet to thread pool for processing. \n");
+            };
+
+            break;
+        }
+
+        default:
+            printf("!!! Unrecognized Protocol Type: %d \n", eth_hdr->ether_type);
+    }
+}/* end sr_handlpacket */
+
+/* Handle IP Packets in this thread */
+void sr_handlepacket_thread(gpointer data, gpointer user_data)
+{
+    struct sr_handlepacket_input *input = (struct sr_handlepacket_input *)data;
+    struct sr_instance* sr = input->sr;
+    uint8_t * packet = input->packet;
+    char* interface = input->interface;
+
+    /* Ethernet Interface */
+    struct sr_if *eth_if = (struct sr_if *) sr_get_interface(sr, interface);
+
+    /* Ethernet Header */
+    struct sr_ethernet_hdr *eth_hdr = (struct sr_ethernet_hdr *) packet;
+
+    switch(ntohs(eth_hdr->ether_type)) {
+        case ETHERTYPE_IP:
             printf("Protocol: IP. \n");
 
             /* Cast to IP Header by indexing into packet */
@@ -349,7 +366,8 @@ void sr_handlepacket_thread(gpointer data, gpointer user_data)
             sr_handleproto_IP(sr, eth_if, eth_hdr, ip_hdr);
             break;
         default:
-            printf("!!! Unrecognized Protocol Type: %d \n", eth_hdr->ether_type);
+            /* Only handle IP packets in this thread */
+            break;
     }
 
     /* Free up all input */
