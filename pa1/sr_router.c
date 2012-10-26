@@ -47,7 +47,7 @@
 #define ARP_CACHE_TIMEOUT 15 * G_USEC_PER_SEC /* 15 Seconds */
 #define IP_QUEUE_TIMEOUT   5 * G_USEC_PER_SEC /*  5 Seconds */
 
-#define MAX_POOL_THREADS 100
+#define MAX_POOL_THREADS 10
 
 #define SEND_PACKET(sr, buf, len, interface) \
     if(sr_send_packet((sr), (buf), (len), (interface)) == 0) { \
