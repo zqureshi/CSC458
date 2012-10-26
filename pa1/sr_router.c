@@ -44,8 +44,9 @@
 
 #define ETHER_ADDR_BROADCAST "\xff\xff\xff\xff\xff\xff"
 
-#define ARP_CACHE_TIMEOUT 15 * G_USEC_PER_SEC /* 15 Seconds */
-#define IP_QUEUE_TIMEOUT   5 * G_USEC_PER_SEC /*  5 Seconds */
+#define ARP_CACHE_TIMEOUT    15 * G_USEC_PER_SEC /* 15 Seconds */
+#define ARP_REQUEST_TIMEOUT   1 * G_USEC_PER_SEC /*  5 Seconds */
+#define ARP_RETRY_COUNT 5
 
 #define MAX_POOL_THREADS 1
 
@@ -69,6 +70,7 @@ void populate_ethernet_header(uint8_t *buf, uint8_t *eth_shost, uint8_t *eth_dho
 void populate_ip_header(uint8_t *buf, uint16_t data_len, uint8_t proto, struct in_addr src, struct in_addr dst);
 void populate_arp_header(uint8_t *buf, uint16_t hrd, uint16_t op, uint8_t *sha, uint32_t sip, uint8_t *dha, uint32_t dip);
 void populate_icmp_error(uint8_t *buf, struct ip *ip_hdr, uint8_t type, uint8_t code);
+void send_arp_request(struct sr_instance *sr, struct sr_rt *next_hop, struct sr_if *out_port);
 
 uint16_t header_checksum(uint8_t *buf, uint16_t len, uint16_t cksum_offset, uint16_t cksum_length);
 uint16_t IP_header_checksum(struct ip *ip_hdr);
@@ -630,36 +632,22 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
 
     struct ip_queue_entry *ip_entry = NULL;
     if(!arp_lookup) {
-        /* Queue packet and send ARP Request */
-        printf("No ARP Entry for Gateway, queuing packet. \n");
-
-        /* Send ARP Request for Gateway */
-        int len = sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr);
-        uint8_t *buf = malloc(len);
-
-        /* Populate ARP Header */
-        populate_arp_header(buf + sizeof(struct sr_ethernet_hdr),
-                ARPHDR_ETHER,
-                ARP_REQUEST,
-                out_port->addr,
-                out_port->ip,
-                (uint8_t *)ETHER_ADDR_BROADCAST,
-                next_hop->gw.s_addr);
-
-        /* Populate Ethernet Header */
-        populate_ethernet_header(buf, out_port->addr, (uint8_t *)ETHER_ADDR_BROADCAST, ETHERTYPE_ARP);
-
-        /* Send packet and free buffer */
-        SEND_PACKET(sr, buf, len, out_port->name);
-        free(buf);
-
-        /* Wait for ARP Reply or Timeout */
+        /* Send ARP Request and Wait for ARP Reply or Timeout */
+        int arp_retries = ARP_RETRY_COUNT;
         ip_entry = ip_queue_lookup(next_hop->gw.s_addr);
-        gint64 end_time = g_get_monotonic_time() + IP_QUEUE_TIMEOUT;
 
         g_mutex_lock(&(ip_entry->lock));
         while(!arp_lookup_entry(next_hop->gw.s_addr, &arp_entry, TRUE)) {
-            if(!g_cond_wait_until(&(ip_entry->wait_reply), &(ip_entry->lock), end_time)) {
+            arp_retry_continue:
+            send_arp_request(sr, next_hop, out_port);
+            arp_retries--;
+
+            if(!g_cond_wait_until(&(ip_entry->wait_reply), &(ip_entry->lock), g_get_monotonic_time() + ARP_REQUEST_TIMEOUT)) {
+                /* If retries left, then try again*/
+                if(arp_retries > 0) {
+                    goto arp_retry_continue;
+                }
+
                 printf("!!! Packet timed out waiting for ARP Reply from %s, dropping. \n", inet_ntoa(next_hop->gw));
                 printf("!!! Sending ICMP Host Unreachable to Source. \n");
 
@@ -719,6 +707,31 @@ void sr_handleproto_IP(struct sr_instance *sr, /* Native byte order */
     if(!arp_lookup) {
         g_mutex_unlock(&(ip_entry->lock));
     }
+}
+
+void send_arp_request(struct sr_instance *sr, struct sr_rt *next_hop, struct sr_if *out_port) {
+        /* Queue packet and send ARP Request */
+        printf("No ARP Entry for Gateway, queuing packet. \n");
+
+        /* Send ARP Request for Gateway */
+        int len = sizeof(struct sr_ethernet_hdr) + sizeof(struct sr_arphdr);
+        uint8_t *buf = malloc(len);
+
+        /* Populate ARP Header */
+        populate_arp_header(buf + sizeof(struct sr_ethernet_hdr),
+                ARPHDR_ETHER,
+                ARP_REQUEST,
+                out_port->addr,
+                out_port->ip,
+                (uint8_t *)ETHER_ADDR_BROADCAST,
+                next_hop->gw.s_addr);
+
+        /* Populate Ethernet Header */
+        populate_ethernet_header(buf, out_port->addr, (uint8_t *)ETHER_ADDR_BROADCAST, ETHERTYPE_ARP);
+
+        /* Send packet and free buffer */
+        SEND_PACKET(sr, buf, len, out_port->name);
+        free(buf);
 }
 
 /*
