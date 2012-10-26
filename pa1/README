@@ -1,0 +1,39 @@
+Assignment 1: Simple Router
+
+Design Decisions:
+  - Decided to use GNOME Glib for Hash Table, Threading and Timer.
+  - Hash Table for ARP Cache keyed by IP
+    Cache is invalidated if a packet is received/sent to that MAC and there
+    we discard it if it's longer than the cache timeout.
+  - Hash Table for IP Packet Queue keyed by IP
+    (Could've used priority queue for this but there was no nice implementation
+    in Glib and didn't want to link to too many libraries)
+  - Thread Pool to handle each packet, the threads in the pool are initialized
+    by default so we don't have overheads once the router has started. The
+    handle packet methods reads input, ad pushes it onto the queue for
+    processing.
+  - Timeouts are implemented by Condition Variables inside the IP Packet Queue.
+    If an ARP Entry is not present, the thread pushes the packet onto queue and
+    waits on the condition variable (until timeout, glib supports a wait_until
+    methos). Thus if an ARP Reply is received, the receiving thread signals
+    the other waiting threads. Otherwise the IP packet thread will timeout 
+    and send the ICMP message back.
+
+Dependencies:
+  - Requires the Glib 2.0 Shared Library and Headers to be present on the
+    system.
+
+Issues:
+Since my router is multi-threaded it doesn't guarantee packets are sent out
+in the order they are received in. Thus, when sending TCP packets, it sometimes
+forwards TCP packets with a later sequence number before the earlier ones and
+then it gets a lot of retransmission requests. I think this causes the VNS
+Server to block packets to my router after a while if there's too many 
+retransmissions because it thinks I'm flooding the network.
+
+Thus, I've reduced the thread pool size to 1 Thread for ARP and 1 for IP, thus
+guaranteeing that IP packets are sent out in order. In this case everything
+works smoothly and all images, files are downloaded properly.
+
+Even when the thread pool is 20, the router works fine most of the time.
+
