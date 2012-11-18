@@ -28,7 +28,7 @@
 \spacing single
 \use_hyperref false
 \papersize letterpaper
-\use_geometry false
+\use_geometry true
 \use_amsmath 1
 \use_esint 1
 \use_mhchem 1
@@ -43,10 +43,16 @@
 \shortcut idx
 \color #008000
 \end_index
+\leftmargin 2cm
+\topmargin 2cm
+\rightmargin 2cm
+\bottommargin 2cm
+\headheight 2cm
+\headsep 2cm
 \secnumdepth 3
 \tocdepth 3
-\paragraph_separation indent
-\paragraph_indentation default
+\paragraph_separation skip
+\defskip medskip
 \quotes_language english
 \papercolumns 1
 \papersides 1
@@ -65,11 +71,101 @@ CSC 458: Problem Set 2
 \end_layout
 
 \begin_layout Author
-Zeeshan Qureshi
+Zeeshan Qureshi (g0zee)
+\end_layout
+
+\begin_layout Section*
+Chapter 4
+\end_layout
+
+\begin_layout Subsection*
+Q1
+\end_layout
+
+\begin_layout Subsubsection*
+(a)
 \end_layout
 
 \begin_layout Standard
+Q's speaker will receive 2 routes to P:
+\end_layout
 
+\begin_layout Itemize
+\begin_inset Formula $\left\langle P\right\rangle $
+\end_inset
+
+
+\end_layout
+
+\begin_layout Itemize
+\begin_inset Formula $\left\langle R,P\right\rangle $
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsubsection*
+(b)
+\end_layout
+
+\begin_layout Itemize
+\begin_inset Formula $A\rightarrow B$
+\end_inset
+
+ goes through link 1
+\end_layout
+
+\begin_layout Itemize
+\begin_inset Formula $B\rightarrow A$
+\end_inset
+
+ goes through link 2
+\end_layout
+
+\begin_layout Subsubsection*
+(c)
+\end_layout
+
+\begin_layout Standard
+Q could have a policy to send packets back through the path they came from,
+ thus sending traffic to A back via link 1.
+\end_layout
+
+\begin_layout Subsubsection*
+(d)
+\end_layout
+
+\begin_layout Standard
+Q could have a policy to send traffic through the longest AS path to a destinati
+on, thus sending it via R.
+\end_layout
+
+\begin_layout Subsection*
+Q26
+\end_layout
+
+\begin_layout Standard
+The main downside of sending traffic for a mobile node back to the home
+ agent is that if the mobile node and correspondent node were close together
+ (say Asia) and the home-agent was far away (say America), then traffic
+ from correspondent to mobile node will go from Asia 
+\begin_inset Formula $\rightarrow$
+\end_inset
+
+ America 
+\begin_inset Formula $\rightarrow$
+\end_inset
+
+ Asia rather than just Asia 
+\begin_inset Formula $\rightarrow$
+\end_inset
+
+ Asia.
+ This is also referred to as the 
+\shape italic
+triangle routing problem
+\shape default
+.
 \end_layout
 
 \end_body
