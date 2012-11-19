@@ -168,5 +168,217 @@ triangle routing problem
 .
 \end_layout
 
+\begin_layout Section*
+Chapter 5
+\end_layout
+
+\begin_layout Subsection*
+Q9
+\end_layout
+
+\begin_layout Subsubsection*
+(a)
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+\text{Delay-Bandwidth Product} & = & 100\text{ ms}*1\text{ Gbps}\\
+ & = & \frac{100}{1000}*\frac{1*10^{9}}{8}\\
+ & = & 12.5\text{ MB}
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+Therefore, to fit 12.5 MB of data, the 
+\shape italic
+Advertised Window
+\shape default
+ will have to be 24 bits long.
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+\text{Total Buffering Capacity} & = & \text{Delay-Bandwidth Product}*\frac{\text{Segment Lifetime}}{\text{RTT}}\\
+ & = & 12.5*10^{6}*\frac{30*1000}{100}\\
+ & = & 3.5\text{ GB}
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+The sequence number will have to be big enough to accomodate the Total Buffering
+ Capacity and not wrap around in the Segment Lifetime, thus the 
+\shape italic
+Sequence Number
+\shape default
+ will be 32 bits long.
+\end_layout
+
+\begin_layout Subsubsection*
+(b)
+\end_layout
+
+\begin_layout Standard
+Both the 
+\shape italic
+Advertised Window
+\shape default
+ and the 
+\shape italic
+Sequence Number
+\shape default
+ are dependent on the RTT which can change over the course of the TCP connection
+, thus none of the values calculated above are absolute.
+\end_layout
+
+\begin_layout Subsection*
+Q12
+\end_layout
+
+\begin_layout Subsubsection*
+(a)
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+\text{Sequence Wrap Time} & = & \frac{2^{32}}{10^{9}/8}=34.36\text{ seconds}
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsubsection*
+(b)
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\begin{eqnarray*}
+\text{Period of single increment} & = & \frac{34.26}{1000}\\
+\\
+\text{Wrap Time} & = & 2^{32}*\frac{34.36}{1000}*\frac{1}{86400}\\
+ & = & 1709\text{ Days}
+\end{eqnarray*}
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsection*
+Q14
+\end_layout
+
+\begin_layout Subsubsection*
+(a)
+\end_layout
+
+\begin_layout Itemize
+If the second packet was a retransmission, then the 
+\shape italic
+Sequence Number
+\shape default
+ will be the same as the first packet.
+ The server will send a SYN ACK for this packet since it might think that
+ the last SYN ACK got lost in transmission.
+\end_layout
+
+\begin_layout Itemize
+If the host crashed and rebooted, then it will be for a new connection request
+ and the 
+\shape italic
+Sequence Number
+\shape default
+ will most probably be different.
+ In this case, the server will send an RST and abort the previous TCP Handshake
+ / Connection.
+\end_layout
+
+\begin_layout Subsubsection*
+(b)
+\end_layout
+
+\begin_layout Enumerate
+If server not listening on <destIP, destPort> then drop packet.
+\end_layout
+
+\begin_layout Enumerate
+If connection is established and SYN is outside the window boundary, then
+ send a RST and abort connection.
+\end_layout
+
+\begin_layout Enumerate
+If in the process of establishing a connection and waiting for ACK and the
+ Sequence Number of this packet is the same as last one, resend a SYN ACK
+ for this.
+\end_layout
+
+\begin_layout Enumerate
+If not waiting for handshake ACK (or if the packet wasn't a retransmission),
+ send a new SYN ACK for this SYN packet and go into hankshake ACK wait state.
+\end_layout
+
+\begin_layout Subsection*
+Q16
+\end_layout
+
+\begin_layout Subsubsection*
+(a)
+\end_layout
+
+\begin_layout Standard
+Since Host B didn't send the data to A, the ACK sent by A will have a sequence
+ number greater than the window of ACK's B is expecting, thus on receiving
+ this ACK, it well send an empty ACK with the next sequence number expected.
+\end_layout
+
+\begin_layout Subsubsection*
+(b)
+\end_layout
+
+\begin_layout Standard
+Both A and B will receive the 100 byte packet and send an ACK for it, but
+ since they didn't actually send it, each end will receive the ACK, and
+ find that it is unacceptable and thus send an ACK for their respective
+ previously expected bytes which the other end will receive and drop (since
+ it's a duplicate).
+\end_layout
+
+\begin_layout Standard
+Then if A sends a 200 byte packet to B, everything will be fine.
+\end_layout
+
+\begin_layout Subsection*
+Q25
+\end_layout
+
+\begin_layout Section*
+Chapter 6
+\end_layout
+
+\begin_layout Subsection*
+Q5
+\end_layout
+
+\begin_layout Subsection*
+Q6
+\end_layout
+
+\begin_layout Subsection*
+Q26
+\end_layout
+
 \end_body
 \end_document
