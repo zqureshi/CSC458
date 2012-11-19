@@ -372,12 +372,67 @@ Chapter 6
 Q5
 \end_layout
 
+\begin_layout Standard
+Yes the congestion control window could reach 
+\begin_inset Formula $2x$
+\end_inset
+
+ Delay-Bandwidth product during the slow start phase of a TCP connection,
+ since the window size increases exponentially during that phase.
+ It is not possible after slow start, since the congestion window increases
+ linearly in the normal state, and there would be packet drops decreasing
+ it before it could reach twice the size.
+\end_layout
+
 \begin_layout Subsection*
 Q6
 \end_layout
 
+\begin_layout Standard
+R1 cannot become congested because the max inflow that it can have is 4
+ MBps and the max outflow is 4 MBps as well, thus you can never send R1
+ more packets than it can send out.
+\end_layout
+
+\begin_layout Standard
+For every other router R, going from top to bottom, if the max inflow is
+ 
+\begin_inset Formula $\alpha$
+\end_inset
+
+ MBps then the max outflow is 
+\begin_inset Formula $\frac{\alpha}{2}$
+\end_inset
+
+ MBps, therefore you can always send it more traffic than it can push out,
+ thus congesting it.
+\end_layout
+
 \begin_layout Subsection*
 Q26
+\end_layout
+
+\begin_layout Standard
+This optimistic ACK method defeats the whole purpose of congestion control
+ and will force the sender to send packets at the maximum rate possible
+ even if they are being droppe/queued on the way.
+ This could mean that if there's enough capacity available in the network
+ then there won't be need for many retransmissions but it is highly likely
+ that this will end up congesting the network and couse a lot of retransmissions
+ because of dropped packets.
+\end_layout
+
+\begin_layout Standard
+One simple (yet non-efficient) way would be to send a nonce with each packet
+ and forcing the receiver to send separate ACKs (with the nonce included)
+ for each segment received rather than combining them, thus there would
+ be no way for the receiver to guess the nonce ahead of time and they'll
+ have to wait for the packet to arrive before sending out an ACK.
+\end_layout
+
+\begin_layout Standard
+Another method could be to send a checksum for the range of data being acknowled
+ged, thus the sender can verify the authenticity of the ACK via the checksum.
 \end_layout
 
 \end_body
