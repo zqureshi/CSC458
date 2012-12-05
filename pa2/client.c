@@ -24,6 +24,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <linux/stddef.h>
+#include <time.h>
 
 #include "mysock.h"
 
@@ -49,6 +51,9 @@ static void loop_until_end(int sd);
 int
 main(int argc, char *argv[])
 {
+    /* Seed random number generator */
+    srand(time(NULL));
+
     struct sockaddr_in sin;
     char opt;
     char *pline;
