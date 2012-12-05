@@ -15,12 +15,24 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <arpa/inet.h>
 #include "mysock.h"
 #include "stcp_api.h"
 #include "transport.h"
+#include "mysock_impl.h"
 
+#define CONNECTION_ERROR \
+    errno = ECONNREFUSED; \
+    goto unblock_app
 
-enum { CSTATE_ESTABLISHED };    /* obviously you should have more states */
+enum
+{
+    CSTATE_WAIT_SYN,
+    CSTATE_WAIT_ACK,
+    CSTATE_WAIT_SYNACK,
+    CSTATE_ESTABLISHED,
+    CSTATE_CLOSED
+};    /* obviously you should have more states */
 
 
 /* this structure is global to a mysocket descriptor */
@@ -30,8 +42,9 @@ typedef struct
 
     int connection_state;   /* state of the connection (established, etc.) */
     tcp_seq initial_sequence_num;
+    tcp_seq receive_sequence_num;
 
-    /* any other connection-wide global variables go here */
+    uint16_t window_size;
 } context_t;
 
 
@@ -59,6 +72,152 @@ void transport_init(mysocket_t sd, bool_t is_active)
      * if connection fails; to do so, just set errno appropriately (e.g. to
      * ECONNREFUSED, etc.) before calling the function.
      */
+    if(is_active) { /* Client */
+        /*
+         * Send SYN packet
+         */
+        STCPHeader *header_syn = (STCPHeader *) calloc(1, sizeof(STCPHeader));
+
+        header_syn->th_seq = htonl(ctx->initial_sequence_num);
+        header_syn->th_off = STCP_HDR_LEN;
+        header_syn->th_flags = TH_SYN;
+        header_syn->th_win = htons(STCP_WINDOW_SIZE);
+
+        ssize_t success = stcp_network_send(sd, header_syn, sizeof(STCPHeader), NULL);
+        free(header_syn);
+
+        /* If send failed, retry handshake */
+        if(success == -1) {
+            CONNECTION_ERROR;
+        }
+
+        /*
+         * Wait for SYNACK
+         */
+        ctx->connection_state = CSTATE_WAIT_SYNACK;
+
+        uint8_t *packet_synack = (uint8_t *) calloc(1, sizeof(STCPHeader) + STCP_MSS);
+        ssize_t packet_len = stcp_network_recv(sd, packet_synack, sizeof(STCPHeader) + STCP_MSS);
+
+        if((unsigned) packet_len < sizeof(STCPHeader)) {
+            CONNECTION_ERROR;
+        }
+
+        STCPHeader *header_synack = (STCPHeader *) packet_synack;
+
+        /* If Packet is not SYNACK, retry handshake */
+        if(!(header_synack->th_flags & (TH_SYN | TH_ACK))) {
+            CONNECTION_ERROR;
+        }
+
+        /* Check Acknowledgement Number */
+        if(htonl(header_synack->th_ack) != ctx->initial_sequence_num + 1) {
+            CONNECTION_ERROR;
+        }
+
+        /* Record Sequence Number and Window Size */
+        ctx->receive_sequence_num = ntohl(header_synack->th_seq);
+        ctx->window_size = MIN(ntohs(header_synack->th_win), STCP_WINDOW_SIZE);
+
+        free(packet_synack);
+
+        /*
+         * Send ACK
+         */
+        STCPHeader *header_ack = (STCPHeader *) calloc(1, sizeof(STCPHeader));
+
+        header_ack->th_seq = htonl(++(ctx->initial_sequence_num));
+        header_ack->th_ack = htonl(++(ctx->receive_sequence_num));
+        header_ack->th_off = STCP_HDR_LEN;
+        header_ack->th_flags = TH_ACK;
+        header_ack->th_win = htons(STCP_WINDOW_SIZE);
+
+        success = stcp_network_send(sd, header_ack, sizeof(STCPHeader), NULL);
+        free(header_ack);
+
+        /* If send failed, retry handshake */
+        if(success == -1) {
+            CONNECTION_ERROR;
+        }
+
+    } else { /* Server */
+
+        /*
+         *  Wait For SYN
+         */
+        ctx->connection_state = CSTATE_WAIT_SYN;
+
+        uint8_t *packet_syn = (uint8_t *) calloc(1, sizeof(STCPHeader) + STCP_MSS);
+        ssize_t packet_syn_len = stcp_network_recv(sd, packet_syn, sizeof(STCPHeader) + STCP_MSS);
+
+        if((unsigned) packet_syn_len < sizeof(STCPHeader)) {
+            CONNECTION_ERROR;
+        }
+
+        STCPHeader *header_syn = (STCPHeader *) packet_syn;
+
+        /* If Packet is not SYN, retry handshake */
+        if(!(header_syn->th_flags & TH_SYN)) {
+            CONNECTION_ERROR;
+        }
+
+        /* Record Sequence Number and Window Size */
+        ctx->receive_sequence_num = ntohl(header_syn->th_seq);
+        ctx->window_size = MIN(ntohs(header_syn->th_win), STCP_WINDOW_SIZE);
+
+        free(packet_syn);
+
+        /*
+         * Send SYNACK
+         */
+        STCPHeader *header_synack = (STCPHeader *) calloc(1, sizeof(STCPHeader));
+
+        header_synack->th_seq = htonl(ctx->initial_sequence_num);
+        header_synack->th_ack = htonl(++(ctx->receive_sequence_num));
+        header_synack->th_off = STCP_HDR_LEN;
+        header_synack->th_flags = TH_SYN | TH_ACK;
+        header_synack->th_win = htonl(STCP_WINDOW_SIZE);
+
+        ssize_t success = stcp_network_send(sd, header_synack, sizeof(STCPHeader), NULL);
+        free(header_synack);
+
+        /* If send failed, retry handshake */
+        if(success == -1) {
+            CONNECTION_ERROR;
+        }
+
+        /*
+         * Wait for ACK
+         */
+        ctx->connection_state = CSTATE_WAIT_ACK;
+
+        uint8_t *packet_ack = (uint8_t *) calloc(1, sizeof(STCPHeader) + STCP_MSS);
+        ssize_t packet_ack_len = stcp_network_recv(sd, packet_ack, sizeof(STCPHeader) + STCP_MSS);
+
+        if((unsigned) packet_ack_len < sizeof(STCPHeader)) {
+            CONNECTION_ERROR;
+        }
+
+        STCPHeader *header_ack = (STCPHeader *) packet_ack;
+
+        /* If Packet is not SYNACK, retry handshake */
+        if(!(header_ack->th_flags & TH_ACK)) {
+            CONNECTION_ERROR;
+        }
+
+        /* Check Acknowledgement Number */
+        if(htonl(header_ack->th_ack) != ctx->initial_sequence_num + 1) {
+            CONNECTION_ERROR;
+        }
+
+        /* Record Sequence Number and Window Size */
+        ctx->receive_sequence_num = ntohl(header_ack->th_seq);
+        ctx->window_size = MIN(ntohs(header_ack->th_win), STCP_WINDOW_SIZE);
+
+        free(packet_ack);
+    }
+
+unblock_app:
     ctx->connection_state = CSTATE_ESTABLISHED;
     stcp_unblock_application(sd);
 
@@ -79,7 +238,7 @@ static void generate_initial_seq_num(context_t *ctx)
     ctx->initial_sequence_num = 1;
 #else
     /* you have to fill this up */
-    /*ctx->initial_sequence_num =;*/
+    ctx->initial_sequence_num = rand() % 255;
 #endif
 }
 
