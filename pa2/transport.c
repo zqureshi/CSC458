@@ -45,9 +45,15 @@ typedef struct
 
     int connection_state;   /* state of the connection (established, etc.) */
     tcp_seq initial_sequence_num;
-    tcp_seq receive_sequence_num;
 
-    uint16_t window_size;
+    /* Send Sequence Variables */
+    tcp_seq snd_una;    /* Send Unacknowledged */
+    tcp_seq snd_nxt;    /* Send Next */
+    tcp_seq snd_wnd;    /* Segment Window */
+
+    /* Receive Sequence Variables */
+    tcp_seq rcv_nxt;    /* Receive Next */
+    tcp_seq rcv_wnd;    /* Receive Window */
 } context_t;
 
 
@@ -68,6 +74,11 @@ void transport_init(mysocket_t sd, bool_t is_active)
 
     generate_initial_seq_num(ctx);
 
+    /* Initialize Sender Variables */
+    ctx->snd_una = ctx->initial_sequence_num;
+    ctx->snd_nxt = ctx->snd_una;
+    ctx->snd_wnd = STCP_WINDOW_SIZE;
+
     /* XXX: you should send a SYN packet here if is_active, or wait for one
      * to arrive if !is_active.  after the handshake completes, unblock the
      * application with stcp_unblock_application(sd).  you may also use
@@ -81,10 +92,10 @@ void transport_init(mysocket_t sd, bool_t is_active)
          */
         STCPHeader *header_syn = (STCPHeader *) calloc(1, sizeof(STCPHeader));
 
-        header_syn->th_seq = htonl(ctx->initial_sequence_num);
+        header_syn->th_seq = htonl((ctx->snd_nxt)++);
         header_syn->th_off = STCP_HDR_LEN;
         header_syn->th_flags = TH_SYN;
-        header_syn->th_win = htons(STCP_WINDOW_SIZE);
+        header_syn->th_win = htons(ctx->snd_wnd);
 
         ssize_t success = stcp_network_send(sd, header_syn, sizeof(STCPHeader), NULL);
         free(header_syn);
@@ -108,11 +119,13 @@ void transport_init(mysocket_t sd, bool_t is_active)
         HANDSHAKE_COND(header_synack->th_flags & (TH_SYN | TH_ACK));
 
         /* Check Acknowledgement Number */
-        HANDSHAKE_COND(htonl(header_synack->th_ack) == ctx->initial_sequence_num + 1);
+        HANDSHAKE_COND(ctx->snd_una < ntohl(header_synack->th_ack));
+        HANDSHAKE_COND(ntohl(header_synack->th_ack) <= ctx->snd_nxt);
+        ctx->snd_una = ntohl(header_synack->th_ack);
 
         /* Record Sequence Number and Window Size */
-        ctx->receive_sequence_num = ntohl(header_synack->th_seq);
-        ctx->window_size = MIN(ntohs(header_synack->th_win), STCP_WINDOW_SIZE);
+        ctx->rcv_nxt = ntohl(header_synack->th_seq);
+        ctx->rcv_wnd = MIN(ntohs(header_synack->th_win), STCP_WINDOW_SIZE);
 
         free(packet_synack);
 
@@ -121,8 +134,8 @@ void transport_init(mysocket_t sd, bool_t is_active)
          */
         STCPHeader *header_ack = (STCPHeader *) calloc(1, sizeof(STCPHeader));
 
-        header_ack->th_seq = htonl(++(ctx->initial_sequence_num));
-        header_ack->th_ack = htonl(++(ctx->receive_sequence_num));
+        header_ack->th_seq = htonl(ctx->snd_nxt);
+        header_ack->th_ack = htonl(++(ctx->rcv_nxt));
         header_ack->th_off = STCP_HDR_LEN;
         header_ack->th_flags = TH_ACK;
         header_ack->th_win = htons(STCP_WINDOW_SIZE);
@@ -151,8 +164,8 @@ void transport_init(mysocket_t sd, bool_t is_active)
         HANDSHAKE_COND(header_syn->th_flags & TH_SYN);
 
         /* Record Sequence Number and Window Size */
-        ctx->receive_sequence_num = ntohl(header_syn->th_seq);
-        ctx->window_size = MIN(ntohs(header_syn->th_win), STCP_WINDOW_SIZE);
+        ctx->rcv_nxt = ntohl(header_syn->th_seq);
+        ctx->rcv_wnd = MIN(ntohs(header_syn->th_win), STCP_WINDOW_SIZE);
 
         free(packet_syn);
 
@@ -161,8 +174,8 @@ void transport_init(mysocket_t sd, bool_t is_active)
          */
         STCPHeader *header_synack = (STCPHeader *) calloc(1, sizeof(STCPHeader));
 
-        header_synack->th_seq = htonl(ctx->initial_sequence_num);
-        header_synack->th_ack = htonl(++(ctx->receive_sequence_num));
+        header_synack->th_seq = htonl((ctx->snd_nxt)++);
+        header_synack->th_ack = htonl(++(ctx->rcv_nxt));
         header_synack->th_off = STCP_HDR_LEN;
         header_synack->th_flags = TH_SYN | TH_ACK;
         header_synack->th_win = htonl(STCP_WINDOW_SIZE);
@@ -185,15 +198,16 @@ void transport_init(mysocket_t sd, bool_t is_active)
 
         STCPHeader *header_ack = (STCPHeader *) packet_ack;
 
-        /* If Packet is not SYNACK, retry handshake */
+        /* Check Sequence Number */
+        HANDSHAKE_COND(ctx->rcv_nxt = header_ack->th_seq);
+
+        /* If Packet is not ACK, retry handshake */
         HANDSHAKE_COND(header_ack->th_flags & TH_ACK);
 
         /* Check Acknowledgement Number */
-        HANDSHAKE_COND(htonl(header_ack->th_ack) == ctx->initial_sequence_num + 1);
-
-        /* Record Sequence Number and Window Size */
-        ctx->receive_sequence_num = ntohl(header_ack->th_seq);
-        ctx->window_size = MIN(ntohs(header_ack->th_win), STCP_WINDOW_SIZE);
+        HANDSHAKE_COND(ctx->snd_una < ntohl(header_ack->th_ack));
+        HANDSHAKE_COND(ntohl(header_ack->th_ack) <= ctx->snd_nxt);
+        ctx->snd_una = ntohl(header_ack->th_ack);
 
         free(packet_ack);
     }
