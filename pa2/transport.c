@@ -128,7 +128,6 @@ void transport_init(mysocket_t sd, bool_t is_active)
         /* Check Acknowledgement Number */
         HANDSHAKE_COND(ctx->snd_una < ntohl(header_synack->th_ack));
         HANDSHAKE_COND(ntohl(header_synack->th_ack) <= ctx->snd_nxt);
-        ctx->snd_una = ntohl(header_synack->th_ack) - 1;
 
         /* Record Sequence Number and Window Size */
         ctx->rcv_nxt = ntohl(header_synack->th_seq);
@@ -153,6 +152,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
         /* If send failed, retry handshake */
         HANDSHAKE_COND(success != -1);
 
+        ctx->connection_state = CSTATE_ESTABLISHED;
     } else { /* Server */
 
         /*
@@ -194,32 +194,10 @@ void transport_init(mysocket_t sd, bool_t is_active)
         HANDSHAKE_COND(success != -1);
 
         /*
-         * Wait for ACK
+         * Wait for ACK in control_loop
          */
         ctx->connection_state = CSTATE_WAIT_ACK;
-
-        uint8_t *packet_ack = (uint8_t *) calloc(1, sizeof(STCPHeader) + STCP_MSS);
-        ssize_t packet_ack_len = stcp_network_recv(sd, packet_ack, sizeof(STCPHeader) + STCP_MSS);
-
-        HANDSHAKE_COND((unsigned) packet_ack_len >= sizeof(STCPHeader));
-
-        STCPHeader *header_ack = (STCPHeader *) packet_ack;
-
-        /* Check Sequence Number */
-        HANDSHAKE_COND(ctx->rcv_nxt == ntohl(header_ack->th_seq));
-
-        /* If Packet is not ACK, retry handshake */
-        HANDSHAKE_COND(header_ack->th_flags & TH_ACK);
-
-        /* Check Acknowledgement Number */
-        HANDSHAKE_COND(ctx->snd_una < ntohl(header_ack->th_ack));
-        HANDSHAKE_COND(ntohl(header_ack->th_ack) <= ctx->snd_nxt);
-        ctx->snd_una = ntohl(header_ack->th_ack) - 1;
-
-        free(packet_ack);
     }
-
-    ctx->connection_state = CSTATE_ESTABLISHED;
 
 unblock_app:
     stcp_unblock_application(sd);
@@ -309,9 +287,25 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
             /* Validate Acknowledgement if any */
             if(header->th_flags & TH_ACK) {
-                RCV_COND(ctx->snd_una < ntohl(header->th_ack));
-                RCV_COND(ntohl(header->th_ack) <= ctx->snd_nxt);
-                ctx->snd_una = ntohl(header->th_ack) - 1;
+                /* Switch to Established State if waiting for ACK */
+                if(ctx->connection_state == CSTATE_WAIT_ACK) {
+                    RCV_COND(ctx->snd_una <= ntohl(header->th_ack));
+                    RCV_COND(ntohl(header->th_ack) <= ctx->snd_nxt);
+                    ctx->connection_state = CSTATE_ESTABLISHED;
+                    ctx->snd_una = ntohl(header->th_ack);
+                } else {
+                    if(ctx->snd_una > ntohl(header->th_ack)) {
+                        /* Duplicate ACK, Ignore */
+                    } else {
+                        RCV_COND(ntohl(header->th_ack) <= ctx->snd_nxt);
+                        ctx->snd_una = ntohl(header->th_ack);
+                    }
+                }
+            } else if(ctx->connection_state == CSTATE_WAIT_ACK) {
+                /* No ACK Received, exit with error */
+                errno = ECONNREFUSED;
+                ctx->done = true;
+                break;
             }
 
             /* Pass Data to App */
