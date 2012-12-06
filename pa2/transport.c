@@ -28,6 +28,13 @@ if(!(c)) { \
     goto unblock_app; \
 }
 
+#define PROTOCOL_COND(cond, lbl) \
+if(!(cond)) { \
+    goto lbl; \
+}
+
+#define RCV_COND(cond) PROTOCOL_COND((cond), handle_close_request)
+
 enum
 {
     CSTATE_WAIT_SYN,
@@ -121,7 +128,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
         /* Check Acknowledgement Number */
         HANDSHAKE_COND(ctx->snd_una < ntohl(header_synack->th_ack));
         HANDSHAKE_COND(ntohl(header_synack->th_ack) <= ctx->snd_nxt);
-        ctx->snd_una = ntohl(header_synack->th_ack);
+        ctx->snd_una = ntohl(header_synack->th_ack) - 1;
 
         /* Record Sequence Number and Window Size */
         ctx->rcv_nxt = ntohl(header_synack->th_seq);
@@ -199,7 +206,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
         STCPHeader *header_ack = (STCPHeader *) packet_ack;
 
         /* Check Sequence Number */
-        HANDSHAKE_COND(ctx->rcv_nxt = header_ack->th_seq);
+        HANDSHAKE_COND(ctx->rcv_nxt == ntohl(header_ack->th_seq));
 
         /* If Packet is not ACK, retry handshake */
         HANDSHAKE_COND(header_ack->th_flags & TH_ACK);
@@ -207,7 +214,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
         /* Check Acknowledgement Number */
         HANDSHAKE_COND(ctx->snd_una < ntohl(header_ack->th_ack));
         HANDSHAKE_COND(ntohl(header_ack->th_ack) <= ctx->snd_nxt);
-        ctx->snd_una = ntohl(header_ack->th_ack);
+        ctx->snd_una = ntohl(header_ack->th_ack) - 1;
 
         free(packet_ack);
     }
@@ -292,9 +299,29 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
         if (event & NETWORK_DATA) {
             /* Network has received data, send it up to app */
+            uint8_t *packet = (uint8_t *) calloc(1, sizeof(STCPHeader) + sizeof(uint8_t) * STCP_MSS);
+            ssize_t packet_len = stcp_network_recv(sd, packet, sizeof(STCPHeader) + sizeof(uint8_t) * STCP_MSS);
+            STCPHeader *header = (STCPHeader *) packet;
 
+            /* Validate Sequence Number */
+            RCV_COND(ctx->rcv_nxt == ntohl(header->th_seq));
+            ctx->rcv_nxt += packet_len - TCP_DATA_START(packet);
+
+            /* Validate Acknowledgement if any */
+            if(header->th_flags & TH_ACK) {
+                RCV_COND(ctx->snd_una < ntohl(header->th_ack));
+                RCV_COND(ntohl(header->th_ack) <= ctx->snd_nxt);
+                ctx->snd_una = ntohl(header->th_ack) - 1;
+            }
+
+            /* Pass Data to App */
+            stcp_app_send(sd, packet + TCP_DATA_START(packet), packet_len - TCP_DATA_START(packet));
+
+            /* Free up buffers */
+            free(packet);
         }
 
+        handle_close_request:
         if (event & APP_CLOSE_REQUESTED) {
             /* App has requested connection to be closed, terminate connection */
 
