@@ -256,13 +256,53 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
         /* see stcp_api.h or stcp_api.c for details of this function */
         /* XXX: you will need to change some of these arguments! */
-        event = stcp_wait_for_event(sd, 0, NULL);
+        event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
 
         /* check whether it was the network, app, or a close request */
-        if (event & APP_DATA)
-        {
+        if (event & APP_DATA) {
             /* the application has requested that data be sent */
-            /* see stcp_app_recv() */
+            uint8_t *buffer = (uint8_t *) calloc(1, sizeof(uint8_t) * STCP_MSS);
+            int buffer_len = stcp_app_recv(sd, buffer, STCP_MSS);
+
+            /* Create Packet with Header + Payload */
+            int packet_len = sizeof(STCPHeader) +  buffer_len;
+            uint8_t *packet = (uint8_t *) calloc(1, packet_len);
+
+            /* Populate Header */
+            STCPHeader *header = (STCPHeader *) packet;
+            header->th_seq = htonl(ctx->snd_nxt);
+            header->th_ack = htonl(ctx->rcv_nxt);
+            header->th_off = STCP_HDR_LEN;
+            header->th_flags = TH_ACK;
+            header->th_win = htons(ctx->snd_wnd);
+
+            /* Update Sending Variables */
+            ctx->snd_nxt += buffer_len;
+
+            /* Copy over payload */
+            memcpy(packet + TCP_DATA_START(packet), buffer, buffer_len);
+
+            /* Send Packet */
+            stcp_network_send(sd, packet, packet_len, NULL);
+
+            /* Free up buffers */
+            free(packet);
+            free(buffer);
+        }
+
+        if (event & NETWORK_DATA) {
+            /* Network has received data, send it up to app */
+
+        }
+
+        if (event & APP_CLOSE_REQUESTED) {
+            /* App has requested connection to be closed, terminate connection */
+
+        }
+
+        if (event & TIMEOUT) {
+            /* Timeout Occurred, handle it */
+
         }
 
         /* etc. */
