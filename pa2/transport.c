@@ -25,6 +25,7 @@
 #define HANDSHAKE_COND(c) \
 if(!(c)) { \
     errno = ECONNREFUSED; \
+    ctx->connection_state = CSTATE_CLOSED; \
     ctx->done = true; \
     goto unblock_app; \
 }
