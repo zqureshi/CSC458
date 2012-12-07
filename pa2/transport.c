@@ -37,11 +37,16 @@ if(!(cond)) { \
 
 enum
 {
-    CSTATE_WAIT_SYN,
-    CSTATE_WAIT_ACK,
-    CSTATE_WAIT_SYNACK,
+    CSTATE_LISTEN,
+    CSTATE_SYN_SENT,
+    CSTATE_SYN_RCVD,
     CSTATE_ESTABLISHED,
+    CSTATE_CLOSE_WAIT,
     CSTATE_LAST_ACK,
+    CSTATE_FIN_WAIT_1,
+    CSTATE_FIN_WAIT_2,
+    CSTATE_CLOSING,
+    CSTATE_TIME_WAIT,
     CSTATE_CLOSED
 };    /* obviously you should have more states */
 
@@ -111,11 +116,12 @@ void transport_init(mysocket_t sd, bool_t is_active)
         /* If send failed, abort */
         HANDSHAKE_COND(success != -1);
 
+        /* Update State */
+        ctx->connection_state = CSTATE_SYN_SENT;
+
         /*
          * Wait for SYNACK
          */
-        ctx->connection_state = CSTATE_WAIT_SYNACK;
-
         uint8_t *packet_synack = (uint8_t *) calloc(1, sizeof(STCPHeader) + STCP_MSS);
         ssize_t packet_len = stcp_network_recv(sd, packet_synack, sizeof(STCPHeader) + STCP_MSS);
 
@@ -153,13 +159,15 @@ void transport_init(mysocket_t sd, bool_t is_active)
         /* If send failed, retry handshake */
         HANDSHAKE_COND(success != -1);
 
+        /* Update State */
         ctx->connection_state = CSTATE_ESTABLISHED;
+
     } else { /* Server */
 
         /*
          *  Wait For SYN
          */
-        ctx->connection_state = CSTATE_WAIT_SYN;
+        ctx->connection_state = CSTATE_LISTEN;
 
         uint8_t *packet_syn = (uint8_t *) calloc(1, sizeof(STCPHeader) + STCP_MSS);
         ssize_t packet_syn_len = stcp_network_recv(sd, packet_syn, sizeof(STCPHeader) + STCP_MSS);
@@ -177,9 +185,13 @@ void transport_init(mysocket_t sd, bool_t is_active)
 
         free(packet_syn);
 
+        /* Update State */
+        ctx->connection_state = CSTATE_SYN_RCVD;
+
         /*
          * Send SYNACK
          */
+
         STCPHeader *header_synack = (STCPHeader *) calloc(1, sizeof(STCPHeader));
 
         header_synack->th_seq = htonl((ctx->snd_nxt)++);
@@ -197,7 +209,6 @@ void transport_init(mysocket_t sd, bool_t is_active)
         /*
          * Wait for ACK in control_loop
          */
-        ctx->connection_state = CSTATE_WAIT_ACK;
     }
 
 unblock_app:
@@ -289,7 +300,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             /* Validate Acknowledgement if any */
             if(header->th_flags & TH_ACK) {
                 /* Switch to Established State if waiting for ACK */
-                if(ctx->connection_state == CSTATE_WAIT_ACK) {
+                if(ctx->connection_state == CSTATE_SYN_RCVD) {
                     RCV_COND(ctx->snd_una <= ntohl(header->th_ack));
                     RCV_COND(ntohl(header->th_ack) <= ctx->snd_nxt);
                     ctx->connection_state = CSTATE_ESTABLISHED;
@@ -308,7 +319,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
                         ctx->done = true;
                     }
                 }
-            } else if(ctx->connection_state == CSTATE_WAIT_ACK) {
+            } else if(ctx->connection_state == CSTATE_SYN_RCVD) {
                 /* No ACK Received, exit with error */
                 errno = ECONNREFUSED;
                 ctx->done = true;
@@ -324,6 +335,11 @@ static void control_loop(mysocket_t sd, context_t *ctx)
              */
 
             if((header->th_flags & TH_FIN) || (packet_len - TCP_DATA_START(packet) > 0)) {
+                /* Notify application if FIN Received */
+                if(header->th_flags & TH_FIN) {
+                    stcp_fin_received(sd);
+                }
+
                 /* Create Packet with Header */
                 int packet_ack_len = sizeof(STCPHeader);
                 uint8_t *packet_ack = (uint8_t *) calloc(1, packet_ack_len);
