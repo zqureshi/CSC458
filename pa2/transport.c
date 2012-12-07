@@ -41,6 +41,7 @@ enum
     CSTATE_WAIT_ACK,
     CSTATE_WAIT_SYNACK,
     CSTATE_ESTABLISHED,
+    CSTATE_LAST_ACK,
     CSTATE_CLOSED
 };    /* obviously you should have more states */
 
@@ -300,6 +301,12 @@ static void control_loop(mysocket_t sd, context_t *ctx)
                         RCV_COND(ntohl(header->th_ack) <= ctx->snd_nxt);
                         ctx->snd_una = ntohl(header->th_ack);
                     }
+
+                    /* If waiting for last ACK, then close connection */
+                    if(ctx->connection_state == CSTATE_LAST_ACK) {
+                        ctx->connection_state = CSTATE_CLOSED;
+                        ctx->done = true;
+                    }
                 }
             } else if(ctx->connection_state == CSTATE_WAIT_ACK) {
                 /* No ACK Received, exit with error */
@@ -343,7 +350,28 @@ static void control_loop(mysocket_t sd, context_t *ctx)
         handle_close_request:
         if (event & APP_CLOSE_REQUESTED) {
             /* App has requested connection to be closed, terminate connection */
+            printf("Connection Close Requested. \n");
 
+            /* Update context state */
+            ctx->connection_state = CSTATE_LAST_ACK;
+
+            /* Create Packet with Header */
+            int packet_len = sizeof(STCPHeader);
+            uint8_t *packet = (uint8_t *) calloc(1, packet_len);
+
+            /* Populate Header */
+            STCPHeader *header = (STCPHeader *) packet;
+            header->th_seq = htonl(ctx->snd_nxt);
+            header->th_ack = htonl(ctx->rcv_nxt);
+            header->th_off = STCP_HDR_LEN;
+            header->th_flags = TH_FIN | TH_ACK;
+            header->th_win = htons(ctx->snd_wnd);
+
+            /* Send Packet */
+            stcp_network_send(sd, packet, packet_len, NULL);
+
+            /* Free up buffers */
+            free(packet);
         }
 
         if (event & TIMEOUT) {
