@@ -73,6 +73,7 @@ typedef struct
 
 static void generate_initial_seq_num(context_t *ctx);
 static void control_loop(mysocket_t sd, context_t *ctx);
+ssize_t send_packet(mysocket_t sd, context_t *ctx, uint8_t *buffer, uint32_t buffer_len, uint8_t th_flags);
 
 
 /* initialise the transport layer, and start the main loop, handling
@@ -141,21 +142,15 @@ void transport_init(mysocket_t sd, bool_t is_active)
         ctx->rcv_nxt = ntohl(header_synack->th_seq);
         ctx->rcv_wnd = MIN(ntohs(header_synack->th_win), STCP_WINDOW_SIZE);
 
+        /* Update Receiver Variables */
+        ctx->rcv_nxt += 1;
+
         free(packet_synack);
 
         /*
          * Send ACK
          */
-        STCPHeader *header_ack = (STCPHeader *) calloc(1, sizeof(STCPHeader));
-
-        header_ack->th_seq = htonl(ctx->snd_nxt);
-        header_ack->th_ack = htonl(++(ctx->rcv_nxt));
-        header_ack->th_off = STCP_HDR_LEN;
-        header_ack->th_flags = TH_ACK;
-        header_ack->th_win = htons(STCP_WINDOW_SIZE);
-
-        success = stcp_network_send(sd, header_ack, sizeof(STCPHeader), NULL);
-        free(header_ack);
+        success = send_packet(sd, ctx, NULL, 0, TH_ACK);
 
         /* If send failed, retry handshake */
         HANDSHAKE_COND(success != -1);
@@ -184,28 +179,24 @@ void transport_init(mysocket_t sd, bool_t is_active)
         ctx->rcv_nxt = ntohl(header_syn->th_seq);
         ctx->rcv_wnd = MIN(ntohs(header_syn->th_win), STCP_WINDOW_SIZE);
 
-        free(packet_syn);
+        /* Update Receiver Variables */
+        ctx->rcv_nxt += 1;
 
         /* Update State */
         ctx->connection_state = CSTATE_SYN_RCVD;
 
+        free(packet_syn);
+
         /*
          * Send SYNACK
          */
-
-        STCPHeader *header_synack = (STCPHeader *) calloc(1, sizeof(STCPHeader));
-
-        header_synack->th_seq = htonl((ctx->snd_nxt)++);
-        header_synack->th_ack = htonl(++(ctx->rcv_nxt));
-        header_synack->th_off = STCP_HDR_LEN;
-        header_synack->th_flags = TH_SYN | TH_ACK;
-        header_synack->th_win = htonl(STCP_WINDOW_SIZE);
-
-        ssize_t success = stcp_network_send(sd, header_synack, sizeof(STCPHeader), NULL);
-        free(header_synack);
+        int success = send_packet(sd, ctx, NULL, 0, TH_SYN | TH_ACK);
 
         /* If send failed, retry handshake */
         HANDSHAKE_COND(success != -1);
+
+        /* Update Sender Variables */
+        ctx->snd_nxt += 1;
 
         /*
          * Wait for ACK in control_loop
@@ -262,29 +253,10 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             uint8_t *buffer = (uint8_t *) calloc(1, sizeof(uint8_t) * STCP_MSS);
             int buffer_len = stcp_app_recv(sd, buffer, STCP_MSS);
 
-            /* Create Packet with Header + Payload */
-            int packet_len = sizeof(STCPHeader) +  buffer_len;
-            uint8_t *packet = (uint8_t *) calloc(1, packet_len);
-
-            /* Populate Header */
-            STCPHeader *header = (STCPHeader *) packet;
-            header->th_seq = htonl(ctx->snd_nxt);
-            header->th_ack = htonl(ctx->rcv_nxt);
-            header->th_off = STCP_HDR_LEN;
-            header->th_flags = TH_ACK;
-            header->th_win = htons(ctx->snd_wnd);
-
-            /* Update Sending Variables */
-            ctx->snd_nxt += buffer_len;
-
-            /* Copy over payload */
-            memcpy(packet + TCP_DATA_START(packet), buffer, buffer_len);
-
-            /* Send Packet */
-            stcp_network_send(sd, packet, packet_len, NULL);
+            /* Send Payload + ACK */
+            send_packet(sd, ctx, buffer, buffer_len, TH_ACK);
 
             /* Free up buffers */
-            free(packet);
             free(buffer);
         }
 
@@ -368,23 +340,8 @@ static void control_loop(mysocket_t sd, context_t *ctx)
                     }
                 }
 
-                /* Create Packet with Header */
-                int packet_ack_len = sizeof(STCPHeader);
-                uint8_t *packet_ack = (uint8_t *) calloc(1, packet_ack_len);
-
-                /* Populate Header */
-                STCPHeader *header_ack = (STCPHeader *) packet_ack;
-                header_ack->th_seq = htonl(ctx->snd_nxt);
-                header_ack->th_ack = htonl(ctx->rcv_nxt);
-                header_ack->th_off = STCP_HDR_LEN;
-                header_ack->th_flags = TH_ACK;
-                header_ack->th_win = htons(ctx->snd_wnd);
-
-                /* Send Packet */
-                stcp_network_send(sd, packet_ack, packet_ack_len, NULL);
-
-                /* Free up buffers */
-                free(packet_ack);
+                /* Send ACK */
+                send_packet(sd, ctx, NULL, 0, TH_ACK);
             }
 
             /* Free up buffers */
@@ -409,23 +366,8 @@ static void control_loop(mysocket_t sd, context_t *ctx)
                     perror("ERROR: CLOSE Requested in Wrong State!\n");
             }
 
-            /* Create Packet with Header */
-            int packet_len = sizeof(STCPHeader);
-            uint8_t *packet = (uint8_t *) calloc(1, packet_len);
-
-            /* Populate Header */
-            STCPHeader *header = (STCPHeader *) packet;
-            header->th_seq = htonl(ctx->snd_nxt);
-            header->th_ack = htonl(ctx->rcv_nxt);
-            header->th_off = STCP_HDR_LEN;
-            header->th_flags = TH_FIN;
-            header->th_win = htons(ctx->snd_wnd);
-
-            /* Send Packet */
-            stcp_network_send(sd, packet, packet_len, NULL);
-
-            /* Free up buffers */
-            free(packet);
+            /* Send FIN */
+            send_packet(sd, ctx, NULL, 0, TH_FIN);
         }
 
         if (event & TIMEOUT) {
@@ -435,6 +377,38 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
         /* etc. */
     }
+}
+
+ssize_t send_packet(mysocket_t sd, context_t *ctx, uint8_t *buffer, uint32_t buffer_len, uint8_t th_flags) {
+    assert(ctx);
+
+    /* Create Packet with Header */
+    int packet_len = sizeof(STCPHeader) + buffer_len;
+    uint8_t *packet = (uint8_t *) calloc(1, packet_len);
+
+    /* Populate Header */
+    STCPHeader *header = (STCPHeader *) packet;
+    header->th_seq = htonl(ctx->snd_nxt);
+    header->th_ack = htonl(ctx->rcv_nxt);
+    header->th_off = STCP_HDR_LEN;
+    header->th_flags = th_flags;
+    header->th_win = htons(ctx->snd_wnd);
+
+    /* Copy over payload */
+    if(buffer != NULL) {
+        memcpy(packet + TCP_DATA_START(packet), buffer, buffer_len);
+
+        /* Update Sending Variables */
+        ctx->snd_nxt += buffer_len;
+    }
+
+    /* Send Packet */
+    int success = stcp_network_send(sd, packet, packet_len, NULL);
+
+    /* Free up buffers */
+    free(packet);
+
+    return success;
 }
 
 
