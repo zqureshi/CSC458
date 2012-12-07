@@ -252,15 +252,21 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
         /* check whether it was the network, app, or a close request */
         if (event & APP_DATA) {
-            /* the application has requested that data be sent */
-            uint8_t *buffer = (uint8_t *) calloc(1, sizeof(uint8_t) * STCP_MSS);
-            int buffer_len = stcp_app_recv(sd, buffer, STCP_MSS);
+            /* Calculate available space in window */
+            uint32_t snd_wnd_spc = ctx->snd_una + ctx->snd_wnd - ctx->snd_nxt;
 
-            /* Send Payload + ACK */
-            send_packet(sd, ctx, buffer, buffer_len, TH_ACK);
+            /* Only send data if space available */
+            if(snd_wnd_spc > 0) {
+                /* the application has requested that data be sent */
+                uint8_t *buffer = (uint8_t *) calloc(1, sizeof(uint8_t) * MIN(snd_wnd_spc, STCP_MSS));
+                int buffer_len = stcp_app_recv(sd, buffer, MIN(snd_wnd_spc, STCP_MSS));
 
-            /* Free up buffers */
-            free(buffer);
+                /* Send Payload + ACK */
+                send_packet(sd, ctx, buffer, buffer_len, TH_ACK);
+
+                /* Free up buffers */
+                free(buffer);
+            }
         }
 
         if (event & NETWORK_DATA) {
