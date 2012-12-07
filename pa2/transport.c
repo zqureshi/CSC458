@@ -313,10 +313,18 @@ static void control_loop(mysocket_t sd, context_t *ctx)
                         ctx->snd_una = ntohl(header->th_ack);
                     }
 
-                    /* If waiting for last ACK, then close connection */
-                    if(ctx->connection_state == CSTATE_LAST_ACK) {
-                        ctx->connection_state = CSTATE_CLOSED;
-                        ctx->done = true;
+                    /* Switch to appropriate state based on ACK */
+                    switch(ctx->connection_state) {
+                        case CSTATE_FIN_WAIT_1:
+                            ctx->connection_state = CSTATE_FIN_WAIT_2;
+                            break;
+
+                        case CSTATE_CLOSING:
+                        case CSTATE_LAST_ACK:
+                            dprintf("Connection Closed Successfully.\n");
+                            ctx->connection_state = CSTATE_CLOSED;
+                            ctx->done = true;
+                            break;
                     }
                 }
             } else if(ctx->connection_state == CSTATE_SYN_RCVD) {
@@ -333,11 +341,30 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             /*
              * Send ACK if FIN or new data received
              */
-
             if((header->th_flags & TH_FIN) || (packet_len - TCP_DATA_START(packet) > 0)) {
-                /* Notify application if FIN Received */
+
+                /* If FIN Received, notify application and go to appropriate state */
                 if(header->th_flags & TH_FIN) {
                     stcp_fin_received(sd);
+
+                    switch(ctx->connection_state) {
+                        case CSTATE_ESTABLISHED:
+                            ctx->connection_state = CSTATE_CLOSE_WAIT;
+                            break;
+
+                        case CSTATE_FIN_WAIT_1:
+                            ctx->connection_state = CSTATE_CLOSING;
+                            break;
+
+                        case CSTATE_FIN_WAIT_2:
+                            dprintf("Connection Closed Successfully.\n");
+                            ctx->connection_state = CSTATE_CLOSED;
+                            ctx->done = true;
+                            break;
+
+                        default:
+                            perror("ERROR: FIN Received in Wrong State!\n");
+                    }
                 }
 
                 /* Create Packet with Header */
@@ -366,10 +393,20 @@ static void control_loop(mysocket_t sd, context_t *ctx)
         handle_close_request:
         if (event & APP_CLOSE_REQUESTED) {
             /* App has requested connection to be closed, terminate connection */
-            printf("Connection Close Requested. \n");
+            dprintf("Connection Close Requested. \n");
 
-            /* Update context state */
-            ctx->connection_state = CSTATE_LAST_ACK;
+            switch(ctx->connection_state) {
+                case CSTATE_ESTABLISHED:
+                    ctx->connection_state = CSTATE_FIN_WAIT_1;
+                    break;
+
+                case CSTATE_CLOSE_WAIT:
+                    ctx->connection_state = CSTATE_LAST_ACK;
+                    break;
+
+                default:
+                    perror("ERROR: CLOSE Requested in Wrong State!\n");
+            }
 
             /* Create Packet with Header */
             int packet_len = sizeof(STCPHeader);
@@ -380,7 +417,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             header->th_seq = htonl(ctx->snd_nxt);
             header->th_ack = htonl(ctx->rcv_nxt);
             header->th_off = STCP_HDR_LEN;
-            header->th_flags = TH_FIN | TH_ACK;
+            header->th_flags = TH_FIN;
             header->th_win = htons(ctx->snd_wnd);
 
             /* Send Packet */
