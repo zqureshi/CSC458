@@ -311,6 +311,31 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             /* Pass Data to App */
             stcp_app_send(sd, packet + TCP_DATA_START(packet), packet_len - TCP_DATA_START(packet));
 
+
+            /*
+             * Send ACK if FIN or new data received
+             */
+
+            if((header->th_flags & TH_FIN) || (packet_len - TCP_DATA_START(packet) > 0)) {
+                /* Create Packet with Header */
+                int packet_ack_len = sizeof(STCPHeader);
+                uint8_t *packet_ack = (uint8_t *) calloc(1, packet_ack_len);
+
+                /* Populate Header */
+                STCPHeader *header_ack = (STCPHeader *) packet_ack;
+                header_ack->th_seq = htonl(ctx->snd_nxt);
+                header_ack->th_ack = htonl(ctx->rcv_nxt);
+                header_ack->th_off = STCP_HDR_LEN;
+                header_ack->th_flags = TH_ACK;
+                header_ack->th_win = htons(ctx->snd_wnd);
+
+                /* Send Packet */
+                stcp_network_send(sd, packet_ack, packet_ack_len, NULL);
+
+                /* Free up buffers */
+                free(packet_ack);
+            }
+
             /* Free up buffers */
             free(packet);
         }
