@@ -65,6 +65,8 @@ typedef struct
     tcp_seq snd_una;    /* Send Unacknowledged */
     tcp_seq snd_nxt;    /* Send Next */
     tcp_seq snd_wnd;    /* Segment Window */
+    tcp_seq snd_wl1;    /* Sequence Number used for last window update */
+    tcp_seq snd_wl2;    /* Acknowledgement number used for the last window update */
 
     /* Receive Sequence Variables */
     tcp_seq rcv_nxt;    /* Receive Next */
@@ -93,7 +95,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
     /* Initialize Sender Variables */
     ctx->snd_una = ctx->initial_sequence_num;
     ctx->snd_nxt = ctx->snd_una;
-    ctx->snd_wnd = STCP_WINDOW_SIZE;
+    ctx->rcv_wnd = STCP_WINDOW_SIZE;
 
     /* XXX: you should send a SYN packet here if is_active, or wait for one
      * to arrive if !is_active.  after the handshake completes, unblock the
@@ -111,7 +113,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
         header_syn->th_seq = htonl((ctx->snd_nxt)++);
         header_syn->th_off = STCP_HDR_LEN;
         header_syn->th_flags = TH_SYN;
-        header_syn->th_win = htons(ctx->snd_wnd);
+        header_syn->th_win = htons(ctx->rcv_wnd);
 
         ssize_t success = stcp_network_send(sd, header_syn, sizeof(STCPHeader), NULL);
         free(header_syn);
@@ -141,7 +143,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
 
         /* Record Sequence Number and Window Size */
         ctx->rcv_nxt = ntohl(header_synack->th_seq);
-        ctx->rcv_wnd = MIN(ntohs(header_synack->th_win), STCP_WINDOW_SIZE);
+        ctx->snd_wnd = MIN(ntohs(header_synack->th_win), STCP_WINDOW_SIZE);
 
         /* Update Receiver Variables */
         ctx->rcv_nxt += 1;
@@ -178,7 +180,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
 
         /* Record Sequence Number and Window Size */
         ctx->rcv_nxt = ntohl(header_syn->th_seq);
-        ctx->rcv_wnd = MIN(ntohs(header_syn->th_win), STCP_WINDOW_SIZE);
+        ctx->snd_wnd = MIN(ntohs(header_syn->th_win), STCP_WINDOW_SIZE);
 
         /* Update Receiver Variables */
         ctx->rcv_nxt += 1;
@@ -393,7 +395,7 @@ ssize_t send_packet(mysocket_t sd, context_t *ctx, uint8_t *buffer, uint32_t buf
     header->th_ack = htonl(ctx->rcv_nxt);
     header->th_off = STCP_HDR_LEN;
     header->th_flags = th_flags;
-    header->th_win = htons(ctx->snd_wnd);
+    header->th_win = htons(ctx->rcv_wnd);
 
     /* Copy over payload */
     if(buffer != NULL) {
