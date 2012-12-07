@@ -20,6 +20,7 @@
 #include "stcp_api.h"
 #include "transport.h"
 #include "mysock_impl.h"
+#include "list.h"
 
 #define HANDSHAKE_COND(c) \
 if(!(c)) { \
