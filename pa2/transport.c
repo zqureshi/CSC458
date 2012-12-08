@@ -141,12 +141,12 @@ void transport_init(mysocket_t sd, bool_t is_active)
         HANDSHAKE_COND(ctx->snd_una < ntohl(header_synack->th_ack));
         HANDSHAKE_COND(ntohl(header_synack->th_ack) <= ctx->snd_nxt);
 
-        /* Record Sequence Number and Window Size */
-        ctx->rcv_nxt = ntohl(header_synack->th_seq);
-        ctx->snd_wnd = MIN(ntohs(header_synack->th_win), STCP_WINDOW_SIZE);
+        /* Update Sender Variables */
+        ctx->snd_una = ntohl(header_synack->th_ack);
 
-        /* Update Receiver Variables */
-        ctx->rcv_nxt += 1;
+        /* Record Sequence Number and Window Size */
+        ctx->rcv_nxt = ntohl(header_synack->th_seq) + 1;
+        ctx->snd_wnd = MIN(ntohs(header_synack->th_win), STCP_WINDOW_SIZE);
 
         free(packet_synack);
 
