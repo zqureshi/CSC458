@@ -76,17 +76,6 @@ typedef struct tcphdr
 /* STCP maximum segment size */
 #define STCP_MSS 536
 
-/* Default Data Offset when sending packet */
-#define STCP_HDR_LEN 5
-
-/* STCP Default Window Size in bytes */
-#define STCP_WINDOW_SIZE 3072
-
-/* Have a default timeout of 50ms */
-#define STCP_TIMEOUT 50
-
-/* Max retries after which to abort */
-#define STCP_MAX_RETRIES 5
 
 #ifndef MIN
     #define MIN(x,y)  ((x) <= (y) ? (x) : (y))
