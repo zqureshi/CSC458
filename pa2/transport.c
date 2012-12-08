@@ -699,9 +699,6 @@ static void control_loop(mysocket_t sd, context_t *ctx)
         if (TIME_DIFF(&queue_wait_start, &cur_time) >= QUEUE_WAIT * 1000) {
             /* Timeout Occurred, handle it */
 
-            struct timeval cur_time;
-            gettimeofday(&cur_time, NULL);
-
             struct list_head *pos, *tmp;
             snd_queue_t *entry;
 
