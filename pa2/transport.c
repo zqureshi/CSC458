@@ -34,6 +34,9 @@
 /* Max retries after which to abort */
 #define STCP_MAX_RETRIES 5
 
+/* Max Packet Size*/
+#define STCP_MAX_PACKET_SIZE sizeof(STCPHeader) + STCP_MSS
+
 #define HANDSHAKE_COND(c) \
 if(!(c)) { \
     errno = ECONNREFUSED; \
@@ -331,7 +334,7 @@ typedef struct {
     tcp_seq seq_start;          /* Sequence Number of packet for easier access */
     tcp_seq seq_end;            /* Last Sequence number occupied by pacet */
     uint32_t packet_len;        /* Length of packet stored in buffer */
-    uint8_t packet[sizeof(STCPHeader) + STCP_MSS];      /* Packet contents */
+    uint8_t packet[STCP_MAX_PACKET_SIZE];      /* Packet contents */
 } snd_queue_t;
 
 /* this structure is global to a mysocket descriptor */
@@ -414,8 +417,8 @@ void transport_init(mysocket_t sd, bool_t is_active)
         /*
          * Wait for SYNACK
          */
-        uint8_t *packet_synack = (uint8_t *) calloc(1, sizeof(STCPHeader) + STCP_MSS);
-        ssize_t packet_len = stcp_network_recv(sd, packet_synack, sizeof(STCPHeader) + STCP_MSS);
+        uint8_t *packet_synack = (uint8_t *) calloc(1, STCP_MAX_PACKET_SIZE);
+        ssize_t packet_len = stcp_network_recv(sd, packet_synack, STCP_MAX_PACKET_SIZE);
 
         HANDSHAKE_COND((unsigned) packet_len >= sizeof(STCPHeader));
 
@@ -455,8 +458,8 @@ void transport_init(mysocket_t sd, bool_t is_active)
          */
         ctx->connection_state = CSTATE_LISTEN;
 
-        uint8_t *packet_syn = (uint8_t *) calloc(1, sizeof(STCPHeader) + STCP_MSS);
-        ssize_t packet_syn_len = stcp_network_recv(sd, packet_syn, sizeof(STCPHeader) + STCP_MSS);
+        uint8_t *packet_syn = (uint8_t *) calloc(1, STCP_MAX_PACKET_SIZE);
+        ssize_t packet_syn_len = stcp_network_recv(sd, packet_syn, STCP_MAX_PACKET_SIZE);
 
         HANDSHAKE_COND((unsigned) packet_syn_len >= sizeof(STCPHeader));
 
@@ -580,8 +583,8 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
         if (event & NETWORK_DATA) {
             /* Network has received data, send it up to app */
-            uint8_t *packet = (uint8_t *) calloc(1, sizeof(STCPHeader) + sizeof(uint8_t) * STCP_MSS);
-            ssize_t packet_len = stcp_network_recv(sd, packet, sizeof(STCPHeader) + sizeof(uint8_t) * STCP_MSS);
+            uint8_t *packet = (uint8_t *) calloc(1, STCP_MAX_PACKET_SIZE);
+            ssize_t packet_len = stcp_network_recv(sd, packet, STCP_MAX_PACKET_SIZE);
             STCPHeader *header = (STCPHeader *) packet;
 
             /* Validate Sequence Number */
@@ -740,6 +743,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
 ssize_t send_packet(mysocket_t sd, context_t *ctx, uint8_t *buffer, uint32_t buffer_len, uint8_t th_flags, bool_t add_queue) {
     assert(ctx);
+    assert(buffer_len <= STCP_MSS);
 
     /* Create Packet with Header */
     int packet_len = sizeof(STCPHeader) + buffer_len;
