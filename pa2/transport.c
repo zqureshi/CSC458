@@ -327,6 +327,10 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
                 /* If FIN Received, notify application and go to appropriate state */
                 if(header->th_flags & TH_FIN) {
+                    /* FIN is considered to occupy one sequence number */
+                    ctx->snd_una += 1;
+                    ctx->rcv_nxt += 1;
+
                     stcp_fin_received(sd);
 
                     switch(ctx->connection_state) {
@@ -413,6 +417,11 @@ ssize_t send_packet(mysocket_t sd, context_t *ctx, uint8_t *buffer, uint32_t buf
 
     /* Send Packet */
     int success = stcp_network_send(sd, packet, packet_len, NULL);
+
+    /* If sent a FIN then increment sequence number */
+    if(th_flags & TH_FIN) {
+        ctx->snd_nxt += 1;
+    }
 
     /* Free up buffers */
     free(packet);
