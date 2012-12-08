@@ -38,6 +38,12 @@ if(!(cond)) { \
 
 #define RCV_COND(cond) PROTOCOL_COND((cond), handle_close_request)
 
+/* Calculate time difference in usec between timeval a, b */
+#define TIME_DIFF(a, b) ((((b)->tv_sec - (a)->tv_sec) * 1000 * 1000 + (b)->tv_usec) - (a)->tv_usec)
+
+/* Milliseconds to wait between send queue refreshes */
+#define QUEUE_WAIT 10
+
 enum
 {
     CSTATE_LISTEN,
@@ -259,12 +265,12 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 {
     assert(ctx);
 
-    /* 50ms = 50,000,000ns */
-    #define MSEC_TO_NS 1000 * 1000
-    #define SEC_TO_NS 1000 * MSEC_TO_NS
-    long int stcp_timeout_msec = 50;
-    long int stcp_timeout_usec = stcp_timeout_msec * 1000;
-    long int stcp_timeout = stcp_timeout_msec * MSEC_TO_NS;
+    /* Timeout after 10ms = 10,000,000ns of waiting */
+    long int event_wait_timeout = 10 * 1000 * 1000;
+
+    /* Maintain separate timer for checking queue */
+    struct timeval queue_wait_start;
+    gettimeofday(&queue_wait_start, NULL);
 
     while (!ctx->done)
     {
@@ -274,9 +280,16 @@ static void control_loop(mysocket_t sd, context_t *ctx)
         struct timeval cur_time;
         gettimeofday(&cur_time, NULL);
 
-        struct timespec timeout = { cur_time.tv_sec + 5, cur_time.tv_usec * 1000 };
+        struct timespec timeout = {
+            cur_time.tv_sec,
+            cur_time.tv_usec * 1000 + event_wait_timeout
+        };
 
-        /* If nsec field is over SEC_TO_NS then increment the second */
+        /* If nsec field has gone over 1 second, increment seconds */
+        while(timeout.tv_nsec >= 1000 * 1000 * 1000 /* 1 Second */ ) {
+            timeout.tv_sec += 1;
+            timeout.tv_nsec -= 1000 * 1000 * 1000;
+        }
 
         /* see stcp_api.h or stcp_api.c for details of this function */
         /* XXX: you will need to change some of these arguments! */
@@ -415,26 +428,46 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             send_packet(sd, ctx, NULL, 0, TH_FIN, TRUE);
         }
 
-        if (event == TIMEOUT) {
+        gettimeofday(&cur_time, NULL);
+        if (TIME_DIFF(&queue_wait_start, &cur_time) >= QUEUE_WAIT * 1000) {
             /* Timeout Occurred, handle it */
-            printf("\nTimeout Occurred, SND.UNA: %d, SND.NXT: %d, RCV.NXT: %d, STATE: %d\n", ctx->snd_una, ctx->snd_nxt, ctx->rcv_nxt, ctx->connection_state);
+
+            struct timeval cur_time;
+            gettimeofday(&cur_time, NULL);
 
             struct list_head *pos, *tmp;
             snd_queue_t *entry;
+
             list_for_each_safe(pos, tmp, &(ctx->snd_queue)) {
                 entry = list_entry(pos, snd_queue_t, queue);
-                printf("Seq Start: %d, Seq End: %d, Retries: %d\n", entry->seq_start, entry->seq_end, entry->retries);
                 if(entry->seq_end >= ctx->snd_una) {
-                    /* Hasn't been ACKed, retransmit */
-                    printf("^^^ Retransmitting ^^^\n");
-                    entry->retries += 1;
+                    /* Hasn't been ACKed, check timer */
+                    if(TIME_DIFF(&(entry->time_sent), &cur_time) >= (STCP_TIMEOUT * 1000)) {
+                        /* If max retries exceeded, then abort */
+                        if(entry->retries >= STCP_MAX_RETRIES) {
+                            ctx->connection_state = CSTATE_CLOSED;
+                            ctx->done = true;
+                            errno = ECONNABORTED;
+                            break;
+                        }
+
+                        printf("Seq Start: %d, Seq End: %d, Retries: %d\n", entry->seq_start, entry->seq_end, entry->retries);
+                        printf("^^^ Retransmitting ^^^\n");
+                        stcp_network_send(sd, entry->packet, entry->packet_len, NULL);
+                        gettimeofday(&(entry->time_sent), NULL);
+                        entry->retries += 1;
+                    }
                 } else {
                     /* Entry has been ACKed, remove from queue */
+                    printf("Seq Start: %d, Seq End: %d, Retries: %d\n", entry->seq_start, entry->seq_end, entry->retries);
                     printf("^^^ Acknowledged, removing from queue ^^^\n");
                     list_del(pos);
                     free(entry);
                 }
             }
+
+            /* Reset queue wait timer */
+            gettimeofday(&queue_wait_start, NULL);
         }
 
         /* etc. */
