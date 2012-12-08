@@ -736,6 +736,9 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
         /* etc. */
     }
+
+    printf("Connection CLOSED\n");
+    fflush(stdout);
 }
 
 ssize_t send_packet(mysocket_t sd, context_t *ctx, uint8_t *buffer, uint32_t buffer_len, uint8_t th_flags, bool_t add_queue) {
