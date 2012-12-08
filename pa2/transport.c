@@ -28,8 +28,8 @@
 /* STCP Default Window Size in bytes */
 #define STCP_WINDOW_SIZE 3072
 
-/* Have a default timeout of 50ms */
-#define STCP_TIMEOUT 50
+/* Have a default timeout of 200ms */
+#define STCP_TIMEOUT 200
 
 /* Max retries after which to abort */
 #define STCP_MAX_RETRIES 5
@@ -709,6 +709,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
                     if(TIME_DIFF(&(entry->time_sent), &cur_time) >= (STCP_TIMEOUT * 1000)) {
                         /* If max retries exceeded, then abort */
                         if(entry->retries >= STCP_MAX_RETRIES) {
+                            printf("MAX Retries Reached, Aborting!\n");
                             ctx->connection_state = CSTATE_CLOSED;
                             ctx->done = true;
                             errno = ECONNABORTED;
@@ -723,8 +724,8 @@ static void control_loop(mysocket_t sd, context_t *ctx)
                     }
                 } else {
                     /* Entry has been ACKed, remove from queue */
-                    printf("Seq Start: %d, Seq End: %d, Retries: %d\n", entry->seq_start, entry->seq_end, entry->retries);
-                    printf("^^^ Acknowledged, removing from queue ^^^\n");
+                    dprintf("Seq Start: %d, Seq End: %d, Retries: %d\n", entry->seq_start, entry->seq_end, entry->retries);
+                    dprintf("^^^ Acknowledged, removing from queue ^^^\n");
                     list_del(pos);
                     free(entry);
                 }
