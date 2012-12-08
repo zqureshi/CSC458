@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <arpa/inet.h>
+#include <sys/time.h>
 #include "mysock.h"
 #include "stcp_api.h"
 #include "transport.h"
@@ -52,6 +53,16 @@ enum
     CSTATE_CLOSED
 };    /* obviously you should have more states */
 
+/* Send Queue Element */
+typedef struct {
+    struct list_head queue;     /* Doubly linked list of queued packets */
+    struct timeval time_sent;   /* Time packet was send / retransmitted */
+    uint32_t retries;           /* Number of times packet has been retransmitted */
+    tcp_seq seq_start;          /* Sequence Number of packet for easier access */
+    tcp_seq seq_end;            /* Last Sequence number occupied by pacet */
+    uint32_t packet_len;        /* Length of packet stored in buffer */
+    uint8_t packet[sizeof(STCPHeader) + STCP_MSS];      /* Packet contents */
+} snd_queue_t;
 
 /* this structure is global to a mysocket descriptor */
 typedef struct
@@ -71,12 +82,15 @@ typedef struct
     /* Receive Sequence Variables */
     tcp_seq rcv_nxt;    /* Receive Next */
     tcp_seq rcv_wnd;    /* Receive Window */
+
+    /* Send Queue */
+    struct list_head snd_queue;
 } context_t;
 
 
 static void generate_initial_seq_num(context_t *ctx);
 static void control_loop(mysocket_t sd, context_t *ctx);
-ssize_t send_packet(mysocket_t sd, context_t *ctx, uint8_t *buffer, uint32_t buffer_len, uint8_t th_flags);
+ssize_t send_packet(mysocket_t sd, context_t *ctx, uint8_t *buffer, uint32_t buffer_len, uint8_t th_flags, bool_t add_queue);
 
 
 /* initialise the transport layer, and start the main loop, handling
@@ -96,6 +110,9 @@ void transport_init(mysocket_t sd, bool_t is_active)
     ctx->snd_una = ctx->initial_sequence_num;
     ctx->snd_nxt = ctx->snd_una;
     ctx->rcv_wnd = STCP_WINDOW_SIZE;
+
+    /* Initialize Send Queue */
+    INIT_LIST_HEAD(&(ctx->snd_queue));
 
     /* XXX: you should send a SYN packet here if is_active, or wait for one
      * to arrive if !is_active.  after the handshake completes, unblock the
@@ -153,7 +170,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
         /*
          * Send ACK
          */
-        success = send_packet(sd, ctx, NULL, 0, TH_ACK);
+        success = send_packet(sd, ctx, NULL, 0, TH_ACK, FALSE);
 
         /* If send failed, retry handshake */
         HANDSHAKE_COND(success != -1);
@@ -193,7 +210,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
         /*
          * Send SYNACK
          */
-        int success = send_packet(sd, ctx, NULL, 0, TH_SYN | TH_ACK);
+        int success = send_packet(sd, ctx, NULL, 0, TH_SYN | TH_ACK, FALSE);
 
         /* If send failed, retry handshake */
         HANDSHAKE_COND(success != -1);
@@ -242,13 +259,28 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 {
     assert(ctx);
 
+    /* 50ms = 50,000,000ns */
+    #define MSEC_TO_NS 1000 * 1000
+    #define SEC_TO_NS 1000 * MSEC_TO_NS
+    long int stcp_timeout_msec = 50;
+    long int stcp_timeout_usec = stcp_timeout_msec * 1000;
+    long int stcp_timeout = stcp_timeout_msec * MSEC_TO_NS;
+
     while (!ctx->done)
     {
         unsigned int event;
 
+        /* Get current time of day and set timeout accordingly */
+        struct timeval cur_time;
+        gettimeofday(&cur_time, NULL);
+
+        struct timespec timeout = { cur_time.tv_sec + 5, cur_time.tv_usec * 1000 };
+
+        /* If nsec field is over SEC_TO_NS then increment the second */
+
         /* see stcp_api.h or stcp_api.c for details of this function */
         /* XXX: you will need to change some of these arguments! */
-        event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
+        event = stcp_wait_for_event(sd, ANY_EVENT, &timeout);
 
         /* check whether it was the network, app, or a close request */
         if (event & APP_DATA) {
@@ -262,7 +294,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
                 int buffer_len = stcp_app_recv(sd, buffer, MIN(snd_wnd_spc, STCP_MSS));
 
                 /* Send Payload + ACK */
-                send_packet(sd, ctx, buffer, buffer_len, TH_ACK);
+                send_packet(sd, ctx, buffer, buffer_len, TH_ACK, TRUE);
 
                 /* Free up buffers */
                 free(buffer);
@@ -354,7 +386,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
                 }
 
                 /* Send ACK */
-                send_packet(sd, ctx, NULL, 0, TH_ACK);
+                send_packet(sd, ctx, NULL, 0, TH_ACK, FALSE);
             }
 
             /* Free up buffers */
@@ -380,19 +412,36 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             }
 
             /* Send FIN */
-            send_packet(sd, ctx, NULL, 0, TH_FIN);
+            send_packet(sd, ctx, NULL, 0, TH_FIN, TRUE);
         }
 
-        if (event & TIMEOUT) {
+        if (event == TIMEOUT) {
             /* Timeout Occurred, handle it */
+            printf("\nTimeout Occurred, SND.UNA: %d, SND.NXT: %d, RCV.NXT: %d, STATE: %d\n", ctx->snd_una, ctx->snd_nxt, ctx->rcv_nxt, ctx->connection_state);
 
+            struct list_head *pos, *tmp;
+            snd_queue_t *entry;
+            list_for_each_safe(pos, tmp, &(ctx->snd_queue)) {
+                entry = list_entry(pos, snd_queue_t, queue);
+                printf("Seq Start: %d, Seq End: %d, Retries: %d\n", entry->seq_start, entry->seq_end, entry->retries);
+                if(entry->seq_end >= ctx->snd_una) {
+                    /* Hasn't been ACKed, retransmit */
+                    printf("^^^ Retransmitting ^^^\n");
+                    entry->retries += 1;
+                } else {
+                    /* Entry has been ACKed, remove from queue */
+                    printf("^^^ Acknowledged, removing from queue ^^^\n");
+                    list_del(pos);
+                    free(entry);
+                }
+            }
         }
 
         /* etc. */
     }
 }
 
-ssize_t send_packet(mysocket_t sd, context_t *ctx, uint8_t *buffer, uint32_t buffer_len, uint8_t th_flags) {
+ssize_t send_packet(mysocket_t sd, context_t *ctx, uint8_t *buffer, uint32_t buffer_len, uint8_t th_flags, bool_t add_queue) {
     assert(ctx);
 
     /* Create Packet with Header */
@@ -421,6 +470,22 @@ ssize_t send_packet(mysocket_t sd, context_t *ctx, uint8_t *buffer, uint32_t buf
     /* If sent a FIN then increment sequence number */
     if(th_flags & TH_FIN) {
         ctx->snd_nxt += 1;
+    }
+
+    /* Add to Queue if requested */
+    if(add_queue) {
+        /* Populate entry */
+        snd_queue_t *entry = (snd_queue_t *) calloc(1, sizeof(snd_queue_t));
+
+        gettimeofday(&(entry->time_sent), NULL);
+        entry->retries = 0;
+        entry->seq_start = ntohl(header->th_seq);
+        entry->seq_end = ctx->snd_nxt - 1;
+        entry->packet_len = packet_len;
+        memcpy(entry->packet, packet, packet_len);
+
+        /* Add to list */
+        list_add_tail(&(entry->queue), &(ctx->snd_queue));
     }
 
     /* Free up buffers */
